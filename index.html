@@ -295,71 +295,12 @@
       </div>
     </section>
 
-    <!-- 5. レシートAI読み取りタブ -->
-    <section id="tab-receipt" class="tab-pane hidden space-y-4">
-      <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 text-center space-y-4">
-        <div class="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center text-xl mx-auto">
-          <i class="fa-solid fa-wand-magic-sparkles"></i>
-        </div>
-        <div>
-          <h2 class="text-base font-bold text-slate-800">レシート写真を撮って自動入力</h2>
-          <p class="text-xs text-slate-500 mt-1">カメラで撮影するか画像を選ぶと、合計金額や店舗名、品目をAIが自動読み取りします。</p>
-        </div>
-
-        <label class="block w-full py-4 border-2 border-dashed border-brand-300 hover:border-brand-500 rounded-2xl bg-brand-50/30 cursor-pointer active:scale-98 transition">
-          <input type="file" id="receiptFileInput" accept="image/*" capture="environment" class="hidden">
-          <i class="fa-solid fa-camera text-3xl text-brand-600 mb-1 block"></i>
-          <span class="text-xs font-bold text-brand-700 block">カメラで撮る / 写真を選ぶ</span>
-          <span class="text-[10px] text-slate-400">タップしてレシートを撮影</span>
-        </label>
-
-        <!-- ローディング表示 -->
-        <div id="receiptLoading" class="hidden p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 space-y-2">
-          <div class="flex items-center justify-center gap-2">
-            <i class="fa-solid fa-circle-notch fa-spin text-amber-600"></i>
-            <span class="font-bold text-xs">AIがレシートを解析しています...</span>
-          </div>
-          <p class="text-[10px] text-amber-700">金額と品目を読み取っています（数秒お待ちください）</p>
-        </div>
-
-        <!-- 結果カード -->
-        <div id="receiptResultCard" class="hidden text-left bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3">
-          <div class="flex items-center justify-between pb-2 border-b border-slate-200">
-            <span class="text-xs font-bold text-slate-800 flex items-center gap-1">
-              <i class="fa-solid fa-check text-emerald-500"></i> 解析完了
-            </span>
-            <span id="detectedStoreBadge" class="text-xs font-bold px-2 py-0.5 bg-white border border-slate-200 rounded-md text-slate-700">店舗名</span>
-          </div>
-
-          <div class="grid grid-cols-2 gap-2 text-xs">
-            <div class="bg-white p-2.5 rounded-lg border border-slate-200">
-              <span class="text-slate-400 text-[10px] block">日付</span>
-              <span id="resDate" class="font-bold text-slate-800">-</span>
-            </div>
-            <div class="bg-white p-2.5 rounded-lg border border-slate-200">
-              <span class="text-slate-400 text-[10px] block">合計金額</span>
-              <span id="resAmount" class="font-bold text-rose-600 text-sm">-</span>
-            </div>
-          </div>
-
-          <div id="resItemsBox" class="bg-white rounded-lg border border-slate-200 p-2 text-xs">
-            <span class="text-[10px] font-bold text-slate-500 block border-b border-slate-100 pb-1 mb-1">内訳:</span>
-            <ul id="resItemsList" class="space-y-1 max-h-28 overflow-y-auto"></ul>
-          </div>
-
-          <button id="btnApplyReceiptToForm" class="w-full py-3 rounded-xl bg-brand-600 text-white font-bold text-xs active:bg-brand-700 shadow-sm transition">
-            この内容を入力フォームに転記する
-          </button>
-        </div>
-      </div>
-    </section>
-
   </main>
 
   <!-- ===============================
-       スマホ下部固定ナビゲーション（ボトムバー）
+       スマホ下部固定ナビゲーション（スマホ画面に完全最適化）
   =============================== -->
-  <nav class="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200 shadow-lg px-1 py-1 flex items-center justify-around max-w-3xl mx-auto">
+  <nav class="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200 shadow-lg px-2 py-1 flex items-center justify-around max-w-3xl mx-auto">
     <button data-tab="calendar" class="tab-btn active flex-1 py-1 flex flex-col items-center justify-center text-brand-600 font-bold transition">
       <i class="fa-regular fa-calendar-days text-base mb-0.5"></i>
       <span class="text-[10px]">カレンダー</span>
@@ -374,11 +315,6 @@
       <i class="fa-solid fa-plus"></i>
     </button>
 
-    <!-- レシート読み取りボタン復元 -->
-    <button data-tab="receipt" class="tab-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-600 font-medium transition">
-      <i class="fa-solid fa-camera text-base mb-0.5"></i>
-      <span class="text-[10px]">レシート</span>
-    </button>
     <button data-tab="settlement" class="tab-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-600 font-medium transition">
       <i class="fa-solid fa-scale-balanced text-base mb-0.5"></i>
       <span class="text-[10px]">清算</span>
@@ -410,20 +346,42 @@
       <form id="recordForm" class="p-4 overflow-y-auto space-y-4 flex-1 overscroll-contain">
         <input type="hidden" id="editRecordId" value="">
 
-        <!-- 入力画面内のクイックレシート読み取りボタン -->
-        <div class="bg-amber-50/80 border border-amber-200 rounded-2xl p-2.5 flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <div class="w-7 h-7 rounded-lg bg-amber-500 text-white flex items-center justify-center text-xs shrink-0">
-              <i class="fa-solid fa-camera"></i>
+        <!-- レシート隠しファイル入力 -->
+        <input type="file" id="receiptFileInput" accept="image/*" capture="environment" class="hidden">
+
+        <!-- 入力画面内のクイックレシート読み取りセクション -->
+        <div class="space-y-2">
+          <div class="bg-amber-50/90 border border-amber-200 rounded-2xl p-2.5 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <div class="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center text-sm shrink-0 shadow-xs">
+                <i class="fa-solid fa-camera"></i>
+              </div>
+              <div>
+                <span class="text-xs font-bold text-amber-950 block leading-tight">レシートから自動入力</span>
+                <span class="text-[10px] text-amber-700">写真を撮るだけで金額・品目を自動セット</span>
+              </div>
             </div>
+            <button type="button" id="btnQuickReceiptScan" class="px-3 py-1.5 rounded-xl bg-amber-600 active:bg-amber-700 text-white font-bold text-xs shadow-xs transition shrink-0">
+              撮影する
+            </button>
+          </div>
+
+          <!-- シート内のレシート解析中ローディング表示 -->
+          <div id="receiptLoading" class="hidden p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-center gap-2.5 text-xs">
+            <i class="fa-solid fa-circle-notch fa-spin text-amber-600 text-base"></i>
             <div>
-              <span class="text-xs font-bold text-amber-900 block leading-tight">レシートから自動入力</span>
-              <span class="text-[10px] text-amber-700">写真を撮るだけで金額・品目を自動セット</span>
+              <span class="font-bold block">AIがレシートを解析中...</span>
+              <span class="text-[10px] text-amber-700">金額と品目を読み取って自動反映します</span>
             </div>
           </div>
-          <button type="button" id="btnQuickReceiptScan" class="px-3 py-1.5 rounded-xl bg-amber-600 active:bg-amber-700 text-white font-bold text-xs shadow-xs transition">
-            撮影する
-          </button>
+
+          <!-- レシート解析結果インライン通知バナー -->
+          <div id="receiptSuccessNotice" class="hidden p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center justify-between text-xs">
+            <span class="flex items-center gap-1 font-bold">
+              <i class="fa-solid fa-check text-emerald-600"></i> <span id="receiptStoreInfo">店舗名</span> を反映しました
+            </span>
+            <button type="button" id="btnCloseReceiptNotice" class="text-emerald-600 font-bold text-xs p-1">閉じる</button>
+          </div>
         </div>
 
         <!-- 1. 収支切り替え（大きなタブ） -->
@@ -1570,14 +1528,12 @@
     /* ========================================================
        7. AIレシート解析 (Gemini 3 Flash)
     ======================================================== */
-    let lastParsedReceipt = null;
-
     async function handleReceiptUpload(file) {
       if (!file) return;
       const loading = document.getElementById('receiptLoading');
-      const card = document.getElementById('receiptResultCard');
+      const successNotice = document.getElementById('receiptSuccessNotice');
       loading.classList.remove('hidden');
-      card.classList.add('hidden');
+      successNotice.classList.add('hidden');
 
       try {
         const base64Data = await fileToBase64(file);
@@ -1638,29 +1594,37 @@
         if (!text) throw new Error('解析結果なし');
 
         const parsed = JSON.parse(text);
-        lastParsedReceipt = parsed;
 
-        document.getElementById('detectedStoreBadge').textContent = parsed.store || '店舗';
-        document.getElementById('resDate').textContent = parsed.date || formatDateYMD(new Date());
-        document.getElementById('resAmount').textContent = `¥${Number(parsed.totalAmount || 0).toLocaleString()}`;
-
-        const itemsList = document.getElementById('resItemsList');
-        itemsList.innerHTML = '';
-        if (parsed.items && parsed.items.length > 0) {
-          parsed.items.forEach(it => {
-            const li = document.createElement('li');
-            li.className = 'flex justify-between text-slate-600';
-            li.innerHTML = `<span>${escapeHtml(it.name)}</span><span>¥${Number(it.price).toLocaleString()}</span>`;
-            itemsList.appendChild(li);
-          });
+        // フォームへダイレクトに転記
+        if (parsed.totalAmount) {
+          document.getElementById('formAmount').value = parsed.totalAmount;
+        }
+        if (parsed.date) {
+          setDateInputValue(parsed.date);
+        }
+        if (parsed.category) {
+          setRecordType('expense');
+          selectCategory(parsed.category);
         }
 
-        card.classList.remove('hidden');
-        showToast('レシートを読み取りました！', 'success');
+        let memoText = parsed.store || '';
+        if (parsed.items && parsed.items.length > 0) {
+          const itemNames = parsed.items.map(i => i.name).filter(Boolean).slice(0, 3).join(', ');
+          memoText += memoText ? ` (${itemNames})` : itemNames;
+        }
+        if (memoText) {
+          document.getElementById('formMemo').value = memoText;
+        }
+
+        // 成功バナー表示
+        document.getElementById('receiptStoreInfo').textContent = parsed.store ? `「${parsed.store}」¥${Number(parsed.totalAmount).toLocaleString()}` : `¥${Number(parsed.totalAmount).toLocaleString()}`;
+        successNotice.classList.remove('hidden');
+
+        showToast('レシート内容をフォームに自動入力しました！', 'success');
 
       } catch (err) {
         console.error(err);
-        showToast('読み取りに失敗しました', 'error');
+        showToast('レシートの読み取りに失敗しました。手動で入力してください。', 'error');
       } finally {
         loading.classList.add('hidden');
       }
@@ -1873,17 +1837,9 @@
           handleReceiptUpload(e.target.files[0]);
         }
       });
-      document.getElementById('btnApplyReceiptToForm').addEventListener('click', () => {
-        if (!lastParsedReceipt) return;
-        openRecordSheetForNew(lastParsedReceipt.date || formatDateYMD(new Date()));
-        document.getElementById('formAmount').value = lastParsedReceipt.totalAmount || '';
-        selectCategory(lastParsedReceipt.category || '食費');
-        let m = lastParsedReceipt.store ? `${lastParsedReceipt.store} ` : '';
-        if (lastParsedReceipt.items?.length > 0) {
-          m += `(${lastParsedReceipt.items.map(i => i.name).slice(0, 2).join(',')})`;
-        }
-        document.getElementById('formMemo').value = m;
-        showToast('入力フォームに転記しました', 'info');
+
+      document.getElementById('btnCloseReceiptNotice').addEventListener('click', () => {
+        document.getElementById('receiptSuccessNotice').classList.add('hidden');
       });
     }
 
