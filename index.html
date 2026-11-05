@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>PairBook - 共有家計簿</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -10,9 +10,9 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <!-- MQTT.js (GitHub Pages等の外部環境でも設定不要でリアルタイム同期を実現するエンジン) -->
-  <script src="https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js"></script>
-  <!-- Google Fonts Inter & Noto Sans JP -->
+  <!-- GunDB (サーバー不要で複数ブラウザ・端末間で確実にリアルタイム同期する分散型DB) -->
+  <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+  <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
@@ -37,151 +37,133 @@
     }
   </script>
   <style>
-    /* スクロールバーのカスタマイズ */
-    ::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
-    }
-    ::-webkit-scrollbar-track {
-      background: #f1f5f9;
-    }
-    ::-webkit-scrollbar-thumb {
-      background: #cbd5e1;
-      border-radius: 9999px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-      background: #94a3b8;
-    }
-    .tap-highlight-transparent {
+    /* iOSのタップハイライト無効化＆スクロール改善 */
+    * {
       -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    /* iOS Safariで入力時に画面が自動ズームするのを防ぐ */
+    input, select, textarea {
+      font-size: 16px !important;
+    }
+    /* スムーズスクロール */
+    html {
+      scroll-behavior: smooth;
+    }
+    /* アニメーション用クラス */
+    .sheet-enter {
+      transform: translateY(100%);
+    }
+    .sheet-enter-active {
+      transform: translateY(0);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .sheet-exit-active {
+      transform: translateY(100%);
+      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-sans antialiased selection:bg-brand-500 selection:text-white">
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col font-sans pb-24 antialiased selection:bg-brand-500 selection:text-white">
 
   <!-- ===============================
-       ヘッダー & ナビゲーション
+       ヘッダー（スマホ最適化）
   =============================== -->
-  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
-    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-      <!-- ロゴ・タイトル -->
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-brand-600 to-indigo-400 flex items-center justify-center text-white shadow-md shadow-brand-500/20">
-          <i class="fa-solid fa-wallet text-lg"></i>
+  <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+    <div class="max-w-3xl mx-auto px-4 py-2.5 flex items-center justify-between gap-2">
+      <!-- タイトルとルーム表示 -->
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-500 flex items-center justify-center text-white shadow-sm">
+          <i class="fa-solid fa-wallet text-sm"></i>
         </div>
         <div>
-          <h1 class="text-lg font-bold text-slate-800 leading-tight flex items-center gap-2">
-            PairBook <span class="text-xs font-medium px-2 py-0.5 bg-brand-50 text-brand-600 rounded-full border border-brand-100">共有家計簿</span>
-          </h1>
-          <p class="text-xs text-slate-500 hidden sm:block">2人でも複数人でも、割り勘・立替がサクッと片付く</p>
+          <button id="btnRoomSettings" class="flex items-center gap-1 text-xs font-bold text-slate-800 hover:text-brand-600 transition">
+            <span class="text-slate-500 font-normal">部屋:</span>
+            <span id="currentRoomDisplay" class="bg-brand-50 text-brand-700 px-2 py-0.5 rounded-md border border-brand-100 font-mono">HOME101</span>
+            <i class="fa-solid fa-chevron-down text-[10px] text-slate-400"></i>
+          </button>
         </div>
       </div>
 
-      <!-- ルーム・ユーザー情報エリア -->
-      <div class="flex items-center gap-2 text-xs flex-wrap">
-        <!-- ルームバッジ -->
-        <button id="btnRoomSettings" class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition">
-          <i class="fa-solid fa-users text-brand-600"></i>
-          <span class="font-medium">ルーム:</span>
-          <span id="currentRoomDisplay" class="font-bold text-brand-700">HOME101</span>
-          <i class="fa-solid fa-chevron-down text-[10px] text-slate-400"></i>
+      <!-- 右側: 同期ランプ ＆ ユーザーアイコン ＆ 共有ボタン -->
+      <div class="flex items-center gap-1.5">
+        <!-- 同期ステータスバッジ -->
+        <div id="syncStatusBadge" class="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span id="syncStatusText">同期中</span>
+        </div>
+
+        <!-- 自分の名前ボタン -->
+        <button id="btnUserProfile" class="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-semibold hover:bg-slate-200 transition">
+          <span id="userAvatar" class="w-4 h-4 rounded-full bg-brand-600 text-white flex items-center justify-center text-[10px] font-bold">私</span>
+          <span id="userNameDisplay" class="max-w-[70px] truncate text-[11px]">自分</span>
         </button>
 
-        <!-- 自分のニックネーム表示 -->
-        <button id="btnUserProfile" class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition">
-          <span id="userAvatar" class="w-4 h-4 rounded-full bg-brand-500 text-white flex items-center justify-center text-[10px] font-bold">私</span>
-          <span id="userNameDisplay" class="font-medium">自分</span>
-          <i class="fa-solid fa-pen text-[10px] text-slate-400"></i>
-        </button>
-
-        <!-- 同期ステータス -->
-        <div id="syncStatus" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] bg-slate-100 text-slate-600 border border-slate-200">
-          <span class="w-2 h-2 rounded-full bg-slate-400 animate-pulse"></span>
-          <span>接続準備中</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- 参加中メンバー一覧バー（お互いのアイコン表示） -->
-    <div class="bg-indigo-50/60 border-t border-b border-indigo-100/70 px-4 py-2">
-      <div class="max-w-6xl mx-auto flex items-center justify-between text-xs">
-        <div class="flex items-center gap-2 overflow-x-auto py-0.5">
-          <span class="text-slate-500 font-medium flex items-center gap-1">
-            <i class="fa-solid fa-user-group text-brand-600"></i> 参加中のメンバー:
-          </span>
-          <!-- 動的アバター一覧 -->
-          <div id="onlineMembersList" class="flex items-center gap-1.5">
-            <!-- JSで動的生成 -->
-          </div>
-        </div>
-        <button id="btnShareQuick" class="text-[11px] font-semibold text-brand-600 hover:text-brand-800 flex items-center gap-1 shrink-0 ml-2">
-          <i class="fa-solid fa-share-nodes"></i> 招待リンク
+        <!-- 招待リンクコピー -->
+        <button id="btnShareTop" class="w-7 h-7 rounded-full bg-brand-50 text-brand-600 flex items-center justify-center text-xs hover:bg-brand-100 active:scale-95 transition" title="招待URLをコピー">
+          <i class="fa-solid fa-share-nodes"></i>
         </button>
       </div>
     </div>
 
-    <!-- メインナビゲーションタブ -->
-    <div class="max-w-6xl mx-auto px-4 flex border-b border-slate-100 overflow-x-auto text-sm scrollbar-none">
-      <button data-tab="calendar" class="tab-btn active px-4 py-3 font-semibold border-b-2 border-brand-600 text-brand-600 flex items-center gap-2 whitespace-nowrap">
-        <i class="fa-regular fa-calendar-days"></i> カレンダー
-      </button>
-      <button data-tab="records" class="tab-btn px-4 py-3 font-medium text-slate-500 hover:text-slate-800 border-b-2 border-transparent flex items-center gap-2 whitespace-nowrap">
-        <i class="fa-solid fa-list-ul"></i> 明細一覧
-      </button>
-      <button data-tab="settlement" class="tab-btn px-4 py-3 font-medium text-slate-500 hover:text-slate-800 border-b-2 border-transparent flex items-center gap-2 whitespace-nowrap">
-        <i class="fa-solid fa-scale-balanced"></i> 月末清算・割り勘
-      </button>
-      <button data-tab="analytics" class="tab-btn px-4 py-3 font-medium text-slate-500 hover:text-slate-800 border-b-2 border-transparent flex items-center gap-2 whitespace-nowrap">
-        <i class="fa-solid fa-chart-pie"></i> グラフ分析
-      </button>
-      <button data-tab="receipt" class="tab-btn px-4 py-3 font-medium text-slate-500 hover:text-slate-800 border-b-2 border-transparent flex items-center gap-2 whitespace-nowrap text-amber-600">
-        <i class="fa-solid fa-receipt"></i> レシートAI読取
+    <!-- ルーム内メンバーバー -->
+    <div class="bg-indigo-50/70 border-t border-indigo-100 px-4 py-1.5 flex items-center justify-between text-[11px]">
+      <div class="flex items-center gap-1.5 overflow-x-auto py-0.5">
+        <span class="text-slate-500 font-medium shrink-0">共有相手:</span>
+        <div id="onlineMembersList" class="flex items-center gap-1 shrink-0">
+          <!-- JSで動的アバター追加 -->
+        </div>
+      </div>
+      <button id="btnForceSync" class="text-brand-600 hover:text-brand-800 font-semibold flex items-center gap-1 text-[11px] shrink-0 pl-2">
+        <i class="fa-solid fa-arrows-rotate"></i> 再読込
       </button>
     </div>
   </header>
 
   <!-- ===============================
-       メインコンテンツエリア
+       メインコンテンツ（スマホ中央揃え）
   =============================== -->
-  <main class="flex-1 max-w-6xl w-full mx-auto p-4 sm:p-6 mb-20">
+  <main class="flex-1 max-w-3xl w-full mx-auto p-3 sm:p-5 space-y-4">
 
     <!-- 1. カレンダータブ -->
-    <section id="tab-calendar" class="tab-pane space-y-6">
-      <!-- 月送り・サマリーバー -->
-      <div class="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-200 flex flex-col md:flex-row items-center justify-between gap-4">
-        <!-- 月切り替え -->
-        <div class="flex items-center gap-3">
-          <button id="calPrevMonth" class="p-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 transition">
-            <i class="fa-solid fa-chevron-left"></i>
-          </button>
-          <h2 id="calendarTitle" class="text-xl font-bold text-slate-800 min-w-[140px] text-center">2026年 11月</h2>
-          <button id="calNextMonth" class="p-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 transition">
-            <i class="fa-solid fa-chevron-right"></i>
-          </button>
-          <button id="calToday" class="text-xs px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 font-medium text-slate-600">今月</button>
+    <section id="tab-calendar" class="tab-pane space-y-4">
+      <!-- 月送り＆収支サマリー -->
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 space-y-3">
+        <!-- 月切り替えヘッダー -->
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <button id="calPrevMonth" class="w-8 h-8 rounded-xl bg-slate-100 active:bg-slate-200 text-slate-600 flex items-center justify-center transition">
+              <i class="fa-solid fa-chevron-left text-xs"></i>
+            </button>
+            <h2 id="calendarTitle" class="text-base sm:text-lg font-bold text-slate-800 min-w-[110px] text-center">2026年 11月</h2>
+            <button id="calNextMonth" class="w-8 h-8 rounded-xl bg-slate-100 active:bg-slate-200 text-slate-600 flex items-center justify-center transition">
+              <i class="fa-solid fa-chevron-right text-xs"></i>
+            </button>
+          </div>
+          <button id="calToday" class="text-xs px-2.5 py-1 rounded-lg bg-slate-100 active:bg-slate-200 font-semibold text-slate-600">今月へ</button>
         </div>
 
-        <!-- 今月の収支ダイジェスト -->
-        <div class="flex items-center gap-3 sm:gap-6 text-center w-full md:w-auto justify-around">
-          <div class="px-3 py-1.5 rounded-xl bg-rose-50 border border-rose-100 min-w-[90px]">
-            <p class="text-[11px] font-medium text-rose-600">支出合計</p>
-            <p id="monthExpenseTotal" class="text-base sm:text-lg font-bold text-rose-700">¥0</p>
+        <!-- 3分割サマリーカード -->
+        <div class="grid grid-cols-3 gap-2 text-center pt-1 border-t border-slate-100">
+          <div class="bg-rose-50/70 p-2 rounded-xl border border-rose-100">
+            <span class="text-[10px] font-bold text-rose-600 block">支出合計</span>
+            <span id="monthExpenseTotal" class="text-sm sm:text-base font-extrabold text-rose-700">¥0</span>
           </div>
-          <div class="px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-100 min-w-[90px]">
-            <p class="text-[11px] font-medium text-emerald-600">収入合計</p>
-            <p id="monthIncomeTotal" class="text-base sm:text-lg font-bold text-emerald-700">¥0</p>
+          <div class="bg-emerald-50/70 p-2 rounded-xl border border-emerald-100">
+            <span class="text-[10px] font-bold text-emerald-600 block">収入合計</span>
+            <span id="monthIncomeTotal" class="text-sm sm:text-base font-extrabold text-emerald-700">¥0</span>
           </div>
-          <div class="px-3 py-1.5 rounded-xl bg-brand-50 border border-brand-100 min-w-[90px]">
-            <p class="text-[11px] font-medium text-brand-600">収支差額</p>
-            <p id="monthBalanceTotal" class="text-base sm:text-lg font-bold text-brand-700">¥0</p>
+          <div class="bg-indigo-50/70 p-2 rounded-xl border border-indigo-100">
+            <span class="text-[10px] font-bold text-indigo-600 block">収支差額</span>
+            <span id="monthBalanceTotal" class="text-sm sm:text-base font-extrabold text-indigo-700">¥0</span>
           </div>
         </div>
       </div>
 
-      <!-- カレンダーグリッド本体 -->
+      <!-- カレンダーグリッド -->
       <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <!-- 曜日ヘッダー -->
-        <div class="grid grid-cols-7 text-center py-2.5 bg-slate-50 border-b border-slate-200 text-xs font-bold">
+        <!-- 曜日 -->
+        <div class="grid grid-cols-7 text-center py-2 bg-slate-50 border-b border-slate-200 text-[11px] font-bold">
           <div class="text-rose-500">日</div>
           <div class="text-slate-600">月</div>
           <div class="text-slate-600">火</div>
@@ -191,253 +173,185 @@
           <div class="text-sky-500">土</div>
         </div>
         <!-- 日付セル -->
-        <div id="calendarGrid" class="grid grid-cols-7 auto-rows-fr divide-x divide-y divide-slate-100 text-sm">
+        <div id="calendarGrid" class="grid grid-cols-7 auto-rows-fr divide-x divide-y divide-slate-100">
           <!-- JSで動的生成 -->
         </div>
       </div>
 
-      <!-- 選択日の明細エリア -->
-      <div id="selectedDayCard" class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
-        <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
-          <div class="flex items-center gap-2">
-            <span class="w-3 h-3 rounded-full bg-brand-500"></span>
-            <h3 id="selectedDateTitle" class="font-bold text-slate-800 text-base">日付を選択してください</h3>
-          </div>
-          <button id="btnAddRecordForDate" class="text-xs px-3 py-1.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-medium flex items-center gap-1.5 shadow-sm transition">
+      <!-- 選択日の明細カード -->
+      <div id="selectedDayCard" class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 space-y-3">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+          <h3 id="selectedDateTitle" class="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+            <i class="fa-regular fa-calendar-check text-brand-600"></i> 日付の明細
+          </h3>
+          <button id="btnAddRecordForDate" class="text-xs px-3 py-1.5 rounded-xl bg-brand-600 active:bg-brand-700 text-white font-bold flex items-center gap-1 shadow-xs">
             <i class="fa-solid fa-plus"></i> この日に入力
           </button>
         </div>
         <div id="selectedDayList" class="space-y-2">
-          <p class="text-slate-400 text-center py-6 text-xs">日付をクリックすると、その日の家計簿一覧が表示されます</p>
+          <!-- JSで動的生成 -->
         </div>
       </div>
     </section>
 
     <!-- 2. 明細一覧タブ -->
-    <section id="tab-records" class="tab-pane hidden space-y-4">
-      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-3">
-        <!-- フィルタリング -->
-        <div class="flex flex-wrap items-center gap-2 text-xs">
-          <select id="filterType" class="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 font-medium">
-            <option value="all">すべての種別 (支出/収入)</option>
-            <option value="expense">支出のみ</option>
-            <option value="income">収入のみ</option>
-          </select>
-
-          <select id="filterSharing" class="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 font-medium">
-            <option value="all">共有 & 個人 (すべて)</option>
-            <option value="shared">共有のみ (精算対象)</option>
-            <option value="private">個人用のみ</option>
-          </select>
-
-          <select id="filterCategory" class="px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 font-medium">
-            <option value="all">すべてのカテゴリ</option>
-            <!-- JSでオプション自動生成 -->
-          </select>
-        </div>
-
-        <div class="flex items-center gap-2">
-          <button id="btnQuickAddFromList" class="px-3.5 py-2 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm">
-            <i class="fa-solid fa-plus"></i> 新規記帳
-          </button>
-        </div>
+    <section id="tab-records" class="tab-pane hidden space-y-3">
+      <!-- 簡易フィルタ -->
+      <div class="bg-white rounded-2xl p-3 shadow-sm border border-slate-200 flex flex-wrap gap-2 text-xs">
+        <select id="filterType" class="flex-1 min-w-[120px] p-2 rounded-xl border border-slate-200 bg-slate-50 font-bold text-slate-700">
+          <option value="all">すべて (支出/収入)</option>
+          <option value="expense">支出のみ</option>
+          <option value="income">収入のみ</option>
+        </select>
+        <select id="filterSharing" class="flex-1 min-w-[120px] p-2 rounded-xl border border-slate-200 bg-slate-50 font-bold text-slate-700">
+          <option value="all">共有 & 個人 (すべて)</option>
+          <option value="shared">共有のみ (精算対象)</option>
+          <option value="private">個人専用のみ</option>
+        </select>
       </div>
 
-      <!-- リストテーブル -->
-      <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs sm:text-sm">
-            <thead class="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase font-semibold text-[11px]">
-              <tr>
-                <th class="py-3 px-4">日付</th>
-                <th class="py-3 px-4">区分 / カテゴリ</th>
-                <th class="py-3 px-4">内容・メモ</th>
-                <th class="py-3 px-4">入力者</th>
-                <th class="py-3 px-4">共有</th>
-                <th class="py-3 px-4 text-right">金額</th>
-                <th class="py-3 px-4 text-center">操作</th>
-              </tr>
-            </thead>
-            <tbody id="recordsTableBody" class="divide-y divide-slate-100">
-              <!-- JSで動的生成 -->
-            </tbody>
-          </table>
-        </div>
-        <div id="noRecordsNotice" class="hidden text-center py-12 text-slate-400 text-sm">
-          <i class="fa-solid fa-receipt text-3xl mb-2 text-slate-300"></i>
-          <p>該当する家計簿データがありません</p>
-        </div>
+      <!-- スマホ向けカード型リスト -->
+      <div id="recordsCardList" class="space-y-2">
+        <!-- JSで動的生成 -->
+      </div>
+      <div id="noRecordsNotice" class="hidden text-center py-12 text-slate-400 bg-white rounded-2xl border border-slate-200 p-6">
+        <i class="fa-solid fa-receipt text-3xl mb-2 text-slate-300"></i>
+        <p class="text-xs">登録されている明細がありません</p>
       </div>
     </section>
 
     <!-- 3. 月末清算・割り勘タブ -->
-    <section id="tab-settlement" class="tab-pane hidden space-y-6">
-      <!-- 説明カード -->
-      <div class="bg-gradient-to-r from-brand-600 to-indigo-600 rounded-2xl p-6 text-white shadow-md relative overflow-hidden">
-        <div class="relative z-10">
-          <div class="flex items-center gap-2 text-brand-200 text-xs font-semibold mb-1">
-            <i class="fa-solid fa-sparkles"></i> 自動計算ダッシュボード
-          </div>
-          <h2 class="text-xl sm:text-2xl font-bold">今月の割り勘・立替清算</h2>
-          <p class="text-xs sm:text-sm text-brand-100 mt-1 max-w-xl">
-            「共有」に設定された支出を自動で集計し、誰がいくら多く立て替えているかを算出します。個人の買い物は自動で除外されるため気兼ねなく使えます。
-          </p>
+    <section id="tab-settlement" class="tab-pane hidden space-y-4">
+      <!-- 清算案内バナー -->
+      <div class="bg-gradient-to-r from-brand-600 to-indigo-600 rounded-2xl p-4 text-white shadow-sm space-y-1">
+        <div class="flex items-center gap-1.5 text-brand-200 text-xs font-semibold">
+          <i class="fa-solid fa-scale-balanced"></i> 自動割り勘ダッシュボード
         </div>
-        <i class="fa-solid fa-scale-balanced absolute right-4 -bottom-4 text-8xl text-white/10 pointer-events-none"></i>
+        <h2 class="text-lg font-bold">今月の清算・立替まとめ</h2>
+        <p class="text-xs text-brand-100">
+          「共有する」にした支出のみを自動折半します。個人の買い物は計算から除外されています。
+        </p>
       </div>
 
-      <!-- 送金サマリーボックス -->
-      <div id="settlementActionCard" class="bg-amber-50 border border-amber-200 rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div class="flex items-center gap-4">
-          <div class="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center text-xl shadow-md shadow-amber-500/20">
-            <i class="fa-solid fa-hand-holding-dollar"></i>
-          </div>
-          <div>
-            <span class="text-xs font-bold text-amber-700 uppercase tracking-wider">清算ガイド</span>
-            <div id="settlementInstruction" class="text-base sm:text-lg font-bold text-slate-800 mt-0.5">
-              計算中...
-            </div>
-          </div>
+      <!-- 送金案内ボックス -->
+      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center text-lg shrink-0 shadow-sm">
+          <i class="fa-solid fa-hand-holding-dollar"></i>
         </div>
-        <div id="settlementEqualCheck" class="text-xs font-semibold text-slate-500 bg-white px-3 py-1.5 rounded-xl border border-amber-100">
-          均等割り（折半）基準
+        <div class="flex-1">
+          <span class="text-[10px] font-bold text-amber-700 block uppercase">清算アクション</span>
+          <div id="settlementInstruction" class="text-sm sm:text-base font-bold text-slate-800 leading-snug">
+            計算中...
+          </div>
         </div>
       </div>
 
-      <!-- メンバー別負担状況グリッド -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="memberCardsGrid">
+      <!-- メンバー別負担状況 -->
+      <div id="memberCardsGrid" class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         <!-- JSで動的生成 -->
       </div>
 
-      <!-- 共有支出の項目内訳 -->
-      <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200">
-        <h3 class="font-bold text-slate-800 text-sm mb-4 flex items-center gap-2">
-          <i class="fa-solid fa-layer-group text-brand-600"></i> 共有支出の品目別内訳
+      <!-- 共有品目別の内訳 -->
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200">
+        <h3 class="font-bold text-slate-800 text-xs mb-3 flex items-center gap-1.5">
+          <i class="fa-solid fa-layer-group text-brand-600"></i> 共有支出の品目別合計
         </h3>
-        <div id="sharedCategoryBreakdown" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-xs">
+        <div id="sharedCategoryBreakdown" class="grid grid-cols-2 gap-2 text-xs">
           <!-- JSで動的生成 -->
         </div>
       </div>
     </section>
 
     <!-- 4. グラフ分析タブ -->
-    <section id="tab-analytics" class="tab-pane hidden space-y-6">
-      <!-- コントロールバー -->
-      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center gap-2">
-          <span class="text-xs font-medium text-slate-500">集計対象:</span>
-          <div class="inline-flex rounded-xl bg-slate-100 p-1 text-xs">
-            <button id="btnGraphScopeShared" class="px-3 py-1.5 rounded-lg font-bold bg-white text-brand-600 shadow-sm transition">共有のみ</button>
-            <button id="btnGraphScopeAll" class="px-3 py-1.5 rounded-lg font-medium text-slate-600 transition">全体 (個人含む)</button>
-          </div>
+    <section id="tab-analytics" class="tab-pane hidden space-y-4">
+      <div class="bg-white rounded-2xl p-3 shadow-sm border border-slate-200 flex items-center justify-between gap-2">
+        <div class="inline-flex rounded-xl bg-slate-100 p-0.5 text-xs font-bold">
+          <button id="btnGraphScopeShared" class="px-2.5 py-1 rounded-lg bg-white text-brand-600 shadow-xs">共有のみ</button>
+          <button id="btnGraphScopeAll" class="px-2.5 py-1 rounded-lg text-slate-600">全体(個人含む)</button>
         </div>
-        <div class="flex items-center gap-2">
-          <span class="text-xs font-medium text-slate-500">表示月:</span>
-          <select id="analyticsMonthSelect" class="px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700">
-            <!-- JSで動的生成 -->
-          </select>
+        <select id="analyticsMonthSelect" class="p-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-bold text-slate-700">
+          <!-- JSで動的生成 -->
+        </select>
+      </div>
+
+      <!-- 円グラフ -->
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200">
+        <h3 class="font-bold text-slate-800 text-xs mb-2 flex items-center gap-1.5">
+          <i class="fa-solid fa-chart-pie text-brand-600"></i> カテゴリ別支出割合
+        </h3>
+        <div class="w-full h-56 relative flex items-center justify-center">
+          <canvas id="categoryPieChart"></canvas>
+          <div id="pieEmptyNotice" class="hidden absolute text-xs text-slate-400">データがありません</div>
         </div>
       </div>
 
-      <!-- グラフカードグリッド -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- カテゴリ別支出内訳 (円グラフ) -->
-        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-col items-center">
-          <h3 class="font-bold text-slate-800 text-sm mb-3 self-start flex items-center gap-2">
-            <i class="fa-solid fa-chart-pie text-brand-600"></i> カテゴリ別支出内訳
-          </h3>
-          <div class="w-full max-w-xs h-64 relative flex items-center justify-center">
-            <canvas id="categoryPieChart"></canvas>
-            <div id="pieEmptyNotice" class="hidden absolute inset-0 flex items-center justify-center text-xs text-slate-400">
-              データがありません
-            </div>
-          </div>
-        </div>
-
-        <!-- メンバー別支出負担比較 (棒グラフ) -->
-        <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-col">
-          <h3 class="font-bold text-slate-800 text-sm mb-3 flex items-center gap-2">
-            <i class="fa-solid fa-chart-column text-emerald-600"></i> メンバー別支出額の比較
-          </h3>
-          <div class="w-full h-64 relative flex items-center justify-center">
-            <canvas id="memberBarChart"></canvas>
-            <div id="barEmptyNotice" class="hidden absolute inset-0 flex items-center justify-center text-xs text-slate-400">
-              データがありません
-            </div>
-          </div>
+      <!-- メンバー棒グラフ -->
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200">
+        <h3 class="font-bold text-slate-800 text-xs mb-2 flex items-center gap-1.5">
+          <i class="fa-solid fa-chart-column text-emerald-600"></i> メンバー別支払額
+        </h3>
+        <div class="w-full h-48 relative flex items-center justify-center">
+          <canvas id="memberBarChart"></canvas>
+          <div id="barEmptyNotice" class="hidden absolute text-xs text-slate-400">データがありません</div>
         </div>
       </div>
     </section>
 
     <!-- 5. レシートAI読み取りタブ -->
-    <section id="tab-receipt" class="tab-pane hidden space-y-6">
-      <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-        <div class="max-w-2xl mx-auto text-center space-y-4">
-          <div class="w-14 h-14 rounded-3xl bg-amber-100 text-amber-600 flex items-center justify-center text-2xl mx-auto shadow-inner">
-            <i class="fa-solid fa-wand-magic-sparkles"></i>
+    <section id="tab-receipt" class="tab-pane hidden space-y-4">
+      <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 text-center space-y-4">
+        <div class="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center text-xl mx-auto">
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+        </div>
+        <div>
+          <h2 class="text-base font-bold text-slate-800">レシート写真を撮って自動入力</h2>
+          <p class="text-xs text-slate-500 mt-1">カメラで撮影するか画像を選ぶと、合計金額や店舗名、品目をAIが自動読み取りします。</p>
+        </div>
+
+        <label class="block w-full py-4 border-2 border-dashed border-brand-300 hover:border-brand-500 rounded-2xl bg-brand-50/30 cursor-pointer active:scale-98 transition">
+          <input type="file" id="receiptFileInput" accept="image/*" capture="environment" class="hidden">
+          <i class="fa-solid fa-camera text-3xl text-brand-600 mb-1 block"></i>
+          <span class="text-xs font-bold text-brand-700 block">カメラで撮る / 写真を選ぶ</span>
+          <span class="text-[10px] text-slate-400">タップしてレシートを撮影</span>
+        </label>
+
+        <!-- ローディング表示 -->
+        <div id="receiptLoading" class="hidden p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 space-y-2">
+          <div class="flex items-center justify-center gap-2">
+            <i class="fa-solid fa-circle-notch fa-spin text-amber-600"></i>
+            <span class="font-bold text-xs">AIがレシートを解析しています...</span>
           </div>
-          <div>
-            <h2 class="text-xl font-bold text-slate-800">AI レシート自動読み取り</h2>
-            <p class="text-xs sm:text-sm text-slate-500 mt-1">
-              スマートフォンのカメラで撮影したレシートやレシート画像をアップロードすると、日付・店名・合計金額・品目内訳を自動認識して家計簿に直接入力できます。
-            </p>
+          <p class="text-[10px] text-amber-700">金額と品目を読み取っています（数秒お待ちください）</p>
+        </div>
+
+        <!-- 結果カード -->
+        <div id="receiptResultCard" class="hidden text-left bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3">
+          <div class="flex items-center justify-between pb-2 border-b border-slate-200">
+            <span class="text-xs font-bold text-slate-800 flex items-center gap-1">
+              <i class="fa-solid fa-check text-emerald-500"></i> 解析完了
+            </span>
+            <span id="detectedStoreBadge" class="text-xs font-bold px-2 py-0.5 bg-white border border-slate-200 rounded-md text-slate-700">店舗名</span>
           </div>
 
-          <!-- アップロードエリア -->
-          <div id="dropArea" class="border-2 border-dashed border-slate-300 hover:border-brand-500 rounded-3xl p-8 bg-slate-50 hover:bg-brand-50/30 transition cursor-pointer relative group">
-            <input type="file" id="receiptFileInput" accept="image/*" capture="environment" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
-            <div class="space-y-3 pointer-events-none">
-              <i class="fa-solid fa-cloud-arrow-up text-4xl text-slate-400 group-hover:text-brand-500 transition"></i>
-              <p class="text-sm font-semibold text-slate-700">写真を選択 または ここにドラッグ＆ドロップ</p>
-              <p class="text-xs text-slate-400">カメラでの撮影・JPEG・PNG・WebP画像に対応</p>
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <div class="bg-white p-2.5 rounded-lg border border-slate-200">
+              <span class="text-slate-400 text-[10px] block">日付</span>
+              <span id="resDate" class="font-bold text-slate-800">-</span>
+            </div>
+            <div class="bg-white p-2.5 rounded-lg border border-slate-200">
+              <span class="text-slate-400 text-[10px] block">合計金額</span>
+              <span id="resAmount" class="font-bold text-rose-600 text-sm">-</span>
             </div>
           </div>
 
-          <!-- 解析ローディング -->
-          <div id="receiptLoading" class="hidden p-6 rounded-2xl bg-amber-50 border border-amber-200 text-amber-800 space-y-3">
-            <div class="flex items-center justify-center gap-3">
-              <i class="fa-solid fa-circle-notch fa-spin text-xl text-amber-600"></i>
-              <span class="font-bold text-sm">Gemini AI がレシートを解析中...</span>
-            </div>
-            <p class="text-xs text-amber-700">金額、日付、店名、品目内訳を読み取っています（数秒お待ちください）</p>
+          <div id="resItemsBox" class="bg-white rounded-lg border border-slate-200 p-2 text-xs">
+            <span class="text-[10px] font-bold text-slate-500 block border-b border-slate-100 pb-1 mb-1">内訳:</span>
+            <ul id="resItemsList" class="space-y-1 max-h-28 overflow-y-auto"></ul>
           </div>
 
-          <!-- 解析結果プレビューカード -->
-          <div id="receiptResultCard" class="hidden text-left bg-slate-50 rounded-2xl p-5 border border-slate-200 space-y-4">
-            <div class="flex items-center justify-between pb-3 border-b border-slate-200">
-              <h3 class="font-bold text-slate-800 text-sm flex items-center gap-2">
-                <i class="fa-solid fa-circle-check text-emerald-500"></i> 解析完了
-              </h3>
-              <span id="detectedStoreBadge" class="text-xs px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-semibold text-slate-700">店名</span>
-            </div>
-
-            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
-              <div class="bg-white p-3 rounded-xl border border-slate-200">
-                <span class="text-slate-400 block text-[10px]">日付</span>
-                <span id="resDate" class="font-bold text-slate-800 text-sm">-</span>
-              </div>
-              <div class="bg-white p-3 rounded-xl border border-slate-200">
-                <span class="text-slate-400 block text-[10px]">合計金額</span>
-                <span id="resAmount" class="font-bold text-rose-600 text-sm">-</span>
-              </div>
-              <div class="bg-white p-3 rounded-xl border border-slate-200 col-span-2 sm:col-span-1">
-                <span class="text-slate-400 block text-[10px]">推奨カテゴリ</span>
-                <span id="resCategory" class="font-bold text-slate-800 text-sm">-</span>
-              </div>
-            </div>
-
-            <!-- 品目一覧テーブル -->
-            <div id="resItemsBox" class="bg-white rounded-xl border border-slate-200 p-3 text-xs space-y-1.5">
-              <span class="font-bold text-slate-600 text-[11px] block border-b border-slate-100 pb-1">読み取った品目内訳:</span>
-              <ul id="resItemsList" class="space-y-1 max-h-36 overflow-y-auto">
-                <!-- JSで動的生成 -->
-              </ul>
-            </div>
-
-            <button id="btnApplyReceiptToForm" class="w-full py-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold text-sm shadow-md transition flex items-center justify-center gap-2">
-              <i class="fa-solid fa-arrow-right-to-bracket"></i> この内容を家計簿入力に反映する
-            </button>
-          </div>
+          <button id="btnApplyReceiptToForm" class="w-full py-3 rounded-xl bg-brand-600 text-white font-bold text-xs active:bg-brand-700 shadow-sm transition">
+            この内容を入力フォームに転記する
+          </button>
         </div>
       </div>
     </section>
@@ -445,101 +359,132 @@
   </main>
 
   <!-- ===============================
-       フローティング追加ボタン
+       スマホ下部固定ナビゲーション（ボトムバー）
   =============================== -->
-  <div class="fixed bottom-6 right-6 z-20">
-    <button id="btnFloatingAdd" class="w-14 h-14 rounded-full bg-gradient-to-r from-brand-600 to-indigo-600 text-white shadow-xl shadow-brand-500/30 flex items-center justify-center text-xl hover:scale-105 active:scale-95 transition-all">
+  <nav class="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200 shadow-lg px-2 py-1 flex items-center justify-around max-w-3xl mx-auto">
+    <button data-tab="calendar" class="tab-btn active flex-1 py-1 flex flex-col items-center justify-center text-brand-600 font-bold transition">
+      <i class="fa-regular fa-calendar-days text-base mb-0.5"></i>
+      <span class="text-[10px]">カレンダー</span>
+    </button>
+    <button data-tab="records" class="tab-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-600 font-medium transition">
+      <i class="fa-solid fa-list-ul text-base mb-0.5"></i>
+      <span class="text-[10px]">明細</span>
+    </button>
+
+    <!-- 中央の特大追加ボタン -->
+    <button id="btnBottomAdd" class="relative -top-3 w-12 h-12 rounded-full bg-gradient-to-tr from-brand-600 to-indigo-500 text-white flex items-center justify-center text-xl shadow-lg shadow-brand-500/30 active:scale-95 transition">
       <i class="fa-solid fa-plus"></i>
     </button>
-  </div>
+
+    <button data-tab="settlement" class="tab-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-600 font-medium transition">
+      <i class="fa-solid fa-scale-balanced text-base mb-0.5"></i>
+      <span class="text-[10px]">清算</span>
+    </button>
+    <button data-tab="analytics" class="tab-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-600 font-medium transition">
+      <i class="fa-solid fa-chart-pie text-base mb-0.5"></i>
+      <span class="text-[10px]">分析</span>
+    </button>
+  </nav>
 
   <!-- ===============================
-       モーダル: 家計簿 登録 / 編集
+       ボトムシート: 家計簿入力フォーム（スマホ最適化）
   =============================== -->
-  <div id="recordModal" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm hidden flex items-center justify-center p-4 overflow-y-auto">
-    <div class="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-100 overflow-hidden my-8 animate-in fade-in duration-150">
-      <div class="px-6 py-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
-        <h3 id="recordModalTitle" class="font-bold text-slate-800 text-base flex items-center gap-2">
-          <i class="fa-solid fa-pen-to-square text-brand-600"></i> 家計簿の入力
+  <div id="recordSheetBackdrop" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs hidden transition-opacity">
+    <div id="recordSheet" class="absolute bottom-0 left-0 right-0 max-w-lg mx-auto bg-white rounded-t-3xl shadow-2xl max-h-[92vh] flex flex-col overflow-hidden transition-transform duration-200">
+      
+      <!-- シートヘッダー（ドラッグバー付き） -->
+      <div class="px-5 pt-3 pb-2 border-b border-slate-100 flex items-center justify-between shrink-0">
+        <div class="w-12 h-1.5 bg-slate-200 rounded-full mx-auto absolute left-1/2 -translate-x-1/2 top-2"></div>
+        <h3 id="recordModalTitle" class="font-bold text-slate-800 text-sm mt-1 flex items-center gap-1.5">
+          <i class="fa-solid fa-pen-to-square text-brand-600"></i> 家計簿をつける
         </h3>
-        <button id="btnCloseRecordModal" class="w-8 h-8 rounded-full hover:bg-slate-200 text-slate-400 hover:text-slate-600 flex items-center justify-center transition">
+        <button id="btnCloseRecordSheet" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xs active:bg-slate-200">
           <i class="fa-solid fa-xmark"></i>
         </button>
       </div>
 
-      <form id="recordForm" class="p-6 space-y-4">
+      <!-- 入力スクロールエリア -->
+      <form id="recordForm" class="p-4 overflow-y-auto space-y-4 flex-1">
         <input type="hidden" id="editRecordId" value="">
 
-        <!-- 1. 収支区分 -->
-        <div>
-          <label class="block text-xs font-bold text-slate-600 mb-1.5">収支の区分 <span class="text-rose-500">*</span></label>
-          <div class="grid grid-cols-2 gap-2">
-            <button type="button" id="btnTypeExpense" class="type-selector-btn py-2.5 rounded-xl font-bold text-sm border-2 border-rose-500 bg-rose-50 text-rose-600 flex items-center justify-center gap-2 transition">
-              <i class="fa-solid fa-arrow-trend-down"></i> 支出 (払った)
-            </button>
-            <button type="button" id="btnTypeIncome" class="type-selector-btn py-2.5 rounded-xl font-bold text-sm border-2 border-slate-200 text-slate-500 hover:border-emerald-300 flex items-center justify-center gap-2 transition">
-              <i class="fa-solid fa-arrow-trend-up"></i> 収入 (入った)
-            </button>
+        <!-- 1. 収支切り替え（大きなタブ） -->
+        <div class="grid grid-cols-2 gap-2">
+          <button type="button" id="btnTypeExpense" class="py-2.5 rounded-xl font-bold text-xs border-2 border-rose-500 bg-rose-50 text-rose-600 flex items-center justify-center gap-1.5 active:scale-98 transition">
+            <i class="fa-solid fa-arrow-trend-down"></i> 支出 (支払った)
+          </button>
+          <button type="button" id="btnTypeIncome" class="py-2.5 rounded-xl font-bold text-xs border-2 border-slate-200 text-slate-400 hover:border-emerald-300 flex items-center justify-center gap-1.5 active:scale-98 transition">
+            <i class="fa-solid fa-arrow-trend-up"></i> 収入 (受け取った)
+          </button>
+        </div>
+
+        <!-- 2. 金額入力（巨大フォント & クイック加算ボタン） -->
+        <div class="bg-slate-50 p-3 rounded-2xl border border-slate-200">
+          <div class="flex items-baseline justify-between mb-1.5">
+            <label for="formAmount" class="text-xs font-bold text-slate-600">金額 (円) <span class="text-rose-500">*</span></label>
+            <span class="text-[11px] text-slate-400">半角数字</span>
+          </div>
+          <div class="relative flex items-center">
+            <span class="text-2xl font-black text-slate-400 mr-1.5">¥</span>
+            <input type="number" id="formAmount" required inputmode="numeric" placeholder="0" class="w-full bg-transparent text-3xl font-black text-slate-800 focus:outline-none placeholder:text-slate-300">
+          </div>
+          <!-- クイック増額ボタン -->
+          <div class="flex items-center gap-1.5 pt-2 border-t border-slate-200/60 mt-2 overflow-x-auto text-xs">
+            <button type="button" class="quick-amt-btn px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-bold text-slate-700 active:bg-slate-100" data-val="100">+100</button>
+            <button type="button" class="quick-amt-btn px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-bold text-slate-700 active:bg-slate-100" data-val="500">+500</button>
+            <button type="button" class="quick-amt-btn px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-bold text-slate-700 active:bg-slate-100" data-val="1000">+1,000</button>
+            <button type="button" class="quick-amt-btn px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-bold text-slate-700 active:bg-slate-100" data-val="5000">+5,000</button>
+            <button type="button" id="btnClearAmt" class="px-2.5 py-1 rounded-lg bg-slate-200 text-slate-600 font-bold active:bg-slate-300 ml-auto">C</button>
           </div>
         </div>
 
-        <!-- 2. 日付 & 金額 -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label for="formDate" class="block text-xs font-bold text-slate-600 mb-1">日付 <span class="text-rose-500">*</span></label>
-            <input type="date" id="formDate" required class="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm font-medium">
+        <!-- 3. 日付クイック選択 -->
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1.5">日付</label>
+          <div class="grid grid-cols-4 gap-1.5 mb-1.5 text-xs">
+            <button type="button" id="btnDateToday" class="py-1.5 rounded-xl bg-brand-50 text-brand-700 border border-brand-200 font-bold active:bg-brand-100">今日</button>
+            <button type="button" id="btnDateYesterday" class="py-1.5 rounded-xl bg-slate-100 text-slate-700 font-medium active:bg-slate-200">昨日</button>
+            <button type="button" id="btnDateBeforeYesterday" class="py-1.5 rounded-xl bg-slate-100 text-slate-700 font-medium active:bg-slate-200">一昨日</button>
+            <button type="button" id="btnDateCustom" class="py-1.5 rounded-xl bg-slate-100 text-slate-700 font-medium active:bg-slate-200">指定</button>
           </div>
-          <div>
-            <label for="formAmount" class="block text-xs font-bold text-slate-600 mb-1">金額 (円) <span class="text-rose-500">*</span></label>
-            <div class="relative">
-              <span class="absolute left-3 top-2.5 text-slate-400 font-bold text-sm">¥</span>
-              <input type="number" id="formAmount" required min="1" max="99999999" placeholder="1000" class="w-full pl-8 pr-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm font-bold text-slate-800">
-            </div>
-          </div>
+          <input type="date" id="formDate" required class="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium bg-white">
         </div>
 
-        <!-- 3. カテゴリ（品目） -->
+        <!-- 4. カテゴリ（品目）ボタン一覧 -->
         <div>
-          <label class="block text-xs font-bold text-slate-600 mb-1">カテゴリ（品目） <span class="text-rose-500">*</span></label>
-          <div id="categoryContainer" class="grid grid-cols-3 sm:grid-cols-4 gap-2 text-xs"></div>
+          <label class="block text-xs font-bold text-slate-600 mb-1.5">カテゴリ（品目） <span class="text-rose-500">*</span></label>
+          <div id="categoryContainer" class="grid grid-cols-4 sm:grid-cols-5 gap-1.5 text-xs"></div>
           <input type="hidden" id="formCategory" value="食費" required>
         </div>
 
-        <!-- 4. 共有設定 -->
-        <div class="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-100 space-y-2">
-          <div class="flex items-center justify-between">
-            <div>
-              <label for="formIsShared" class="text-xs font-bold text-indigo-900 flex items-center gap-1.5 cursor-pointer">
-                <i class="fa-solid fa-users text-brand-600"></i> ルームで共有する（清算の対象にする）
-              </label>
-              <p class="text-[11px] text-indigo-600 mt-0.5">
-                オフにすると「自分専用の個人支出」となり、割り勘計算から自動で除外されます。
-              </p>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" id="formIsShared" checked class="sr-only peer">
-              <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-600"></div>
+        <!-- 5. 共有・割り勘トグル -->
+        <div class="p-3 rounded-2xl bg-indigo-50/70 border border-indigo-100 flex items-center justify-between">
+          <div>
+            <label for="formIsShared" class="text-xs font-bold text-indigo-950 flex items-center gap-1 cursor-pointer">
+              <i class="fa-solid fa-users text-brand-600"></i> ルームで共有する（清算対象）
             </label>
+            <p class="text-[10px] text-indigo-700 mt-0.5">OFFにすると自分専用の家計簿になり折半から除外</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer shrink-0">
+            <input type="checkbox" id="formIsShared" checked class="sr-only peer">
+            <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-600"></div>
+          </label>
+        </div>
+
+        <!-- 6. 支払者 & メモ -->
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label for="formPayer" class="block text-[11px] font-bold text-slate-600 mb-1">払った人</label>
+            <input type="text" id="formPayer" placeholder="例: 自分" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs">
+          </div>
+          <div>
+            <label for="formMemo" class="block text-[11px] font-bold text-slate-600 mb-1">メモ・店名</label>
+            <input type="text" id="formMemo" placeholder="例: スーパー" class="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs">
           </div>
         </div>
 
-        <!-- 5. 支払者 -->
-        <div>
-          <label for="formPayer" class="block text-xs font-bold text-slate-600 mb-1">支払った人（立替者）</label>
-          <input type="text" id="formPayer" placeholder="例: 自分, パートナー" class="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500 text-xs font-medium">
-        </div>
-
-        <!-- 6. メモ -->
-        <div>
-          <label for="formMemo" class="block text-xs font-bold text-slate-600 mb-1">内容・メモ・店名</label>
-          <input type="text" id="formMemo" placeholder="例: スーパーでの買い出し" class="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500 text-xs">
-        </div>
-
-        <div class="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
-          <button type="button" id="btnCancelRecordModal" class="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">
-            キャンセル
-          </button>
-          <button type="submit" id="btnSaveRecord" class="px-6 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold shadow-md transition flex items-center gap-1.5">
+        <!-- 保存ボタン -->
+        <div class="pt-2">
+          <button type="submit" id="btnSaveRecord" class="w-full py-3.5 rounded-2xl bg-brand-600 hover:bg-brand-700 text-white font-extrabold text-sm shadow-md active:scale-98 transition flex items-center justify-center gap-2">
             <i class="fa-solid fa-check"></i> 保存する
           </button>
         </div>
@@ -548,125 +493,100 @@
   </div>
 
   <!-- ===============================
-       モーダル: ルーム設定 & 共有リンク
+       モーダル: ルーム設定
   =============================== -->
-  <div id="roomModal" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm hidden flex items-center justify-center p-4">
-    <div class="bg-white w-full max-w-md rounded-3xl shadow-2xl p-6 space-y-4">
-      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
-        <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
-          <i class="fa-solid fa-door-open text-brand-600"></i> ルームの作成・切り替え
+  <div id="roomModal" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs hidden flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-sm rounded-3xl shadow-xl p-5 space-y-4">
+      <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+        <h3 class="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+          <i class="fa-solid fa-door-open text-brand-600"></i> ルーム合言葉の変更
         </h3>
-        <button id="btnCloseRoomModal" class="w-8 h-8 rounded-full hover:bg-slate-100 text-slate-400 flex items-center justify-center">
-          <i class="fa-solid fa-xmark"></i>
+        <button id="btnCloseRoomModal" class="w-7 h-7 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center">
+          <i class="fa-solid fa-xmark text-xs"></i>
         </button>
       </div>
 
       <div class="space-y-3 text-xs">
         <div>
-          <label class="block font-bold text-slate-600 mb-1">現在のルーム合言葉（ID）</label>
-          <div class="flex items-center gap-2">
-            <input type="text" id="inputRoomId" class="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 font-mono text-sm uppercase font-bold text-slate-800 bg-slate-50" readonly>
-            <button id="btnCopyRoomLink" class="px-3.5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold transition flex items-center gap-1.5">
-              <i class="fa-regular fa-copy"></i> 共有URLコピー
+          <label class="block font-bold text-slate-600 mb-1">現在の部屋合言葉</label>
+          <div class="flex items-center gap-1.5">
+            <input type="text" id="inputRoomId" class="flex-1 px-3 py-2 rounded-xl border border-slate-200 font-mono font-bold text-sm bg-slate-50 uppercase" readonly>
+            <button id="btnCopyRoomLinkModal" class="px-3 py-2 rounded-xl bg-brand-600 text-white font-bold shrink-0">
+              URLコピー
             </button>
           </div>
-          <p class="text-[11px] text-slate-400 mt-1">
-            パートナーにこのリンクを送るか同じ合言葉を入力してもらうと、リアルタイムに同じ家計簿を共有できます。
-          </p>
+          <p class="text-[10px] text-slate-400 mt-1">相手にこのURLを送るだけで、同じ家計簿を共有できます。</p>
         </div>
 
-        <div class="pt-3 border-t border-slate-100">
-          <label class="block font-bold text-slate-600 mb-1">別のルームに参加 または 新規作成</label>
-          <div class="flex items-center gap-2">
-            <input type="text" id="inputTargetRoomId" placeholder="合言葉（例: TANAKA-ROOM）" class="flex-1 px-3 py-2 rounded-xl border border-slate-200 uppercase font-mono font-bold text-xs">
-            <button id="btnJoinRoom" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold transition">
-              移動
-            </button>
+        <div class="pt-2 border-t border-slate-100">
+          <label class="block font-bold text-slate-600 mb-1">合言葉を指定して移動</label>
+          <div class="flex items-center gap-1.5">
+            <input type="text" id="inputTargetRoomId" placeholder="例: TANAKA2026" class="flex-1 px-3 py-2 rounded-xl border border-slate-200 uppercase font-bold text-xs">
+            <button id="btnJoinRoom" class="px-3.5 py-2 rounded-xl bg-slate-800 text-white font-bold">移動</button>
           </div>
         </div>
 
-        <div class="pt-2">
-          <button id="btnCreateNewRandomRoom" class="w-full py-2.5 rounded-xl border border-brand-200 text-brand-600 hover:bg-brand-50 font-bold transition flex items-center justify-center gap-1.5">
-            <i class="fa-solid fa-shuffle"></i> 新しい専用ルームIDを発行する
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===============================
-       モーダル: ユーザープロフィール編集
-  =============================== -->
-  <div id="profileModal" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm hidden flex items-center justify-center p-4">
-    <div class="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-6 space-y-4">
-      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
-        <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
-          <i class="fa-solid fa-user-tag text-brand-600"></i> あなたのお名前
-        </h3>
-        <button id="btnCloseProfileModal" class="w-8 h-8 rounded-full hover:bg-slate-100 text-slate-400 flex items-center justify-center">
-          <i class="fa-solid fa-xmark"></i>
-        </button>
-      </div>
-
-      <div class="space-y-3 text-xs">
-        <div>
-          <label class="block font-bold text-slate-600 mb-1">ニックネーム（家計簿やアイコンに表示）</label>
-          <input type="text" id="inputProfileName" placeholder="例: たろう, はなこ" class="w-full px-3 py-2.5 rounded-xl border border-slate-200 font-bold text-sm">
-        </div>
-
-        <button id="btnSaveProfile" class="w-full py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold transition">
-          保存する
+        <button id="btnCreateNewRandomRoom" class="w-full py-2.5 rounded-xl border border-brand-200 text-brand-600 font-bold active:bg-brand-50 mt-1">
+          新しい専用ルームIDを自動発行する
         </button>
       </div>
     </div>
   </div>
 
   <!-- ===============================
-       削除確認カスタムダイアログ
+       モーダル: ユーザー名編集
   =============================== -->
-  <div id="confirmDialog" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm hidden flex items-center justify-center p-4">
-    <div class="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-6 space-y-4 text-center">
-      <div class="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center text-xl mx-auto">
+  <div id="profileModal" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs hidden flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-xs rounded-3xl shadow-xl p-5 space-y-3 text-xs">
+      <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+        <h3 class="font-bold text-slate-800 text-sm">ニックネームの設定</h3>
+        <button id="btnCloseProfileModal" class="w-6 h-6 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center">
+          <i class="fa-solid fa-xmark text-xs"></i>
+        </button>
+      </div>
+      <div>
+        <label class="block font-bold text-slate-600 mb-1">あなたのお名前</label>
+        <input type="text" id="inputProfileName" placeholder="例: たろう" class="w-full px-3 py-2 rounded-xl border border-slate-200 font-bold text-sm">
+      </div>
+      <button id="btnSaveProfile" class="w-full py-2.5 rounded-xl bg-brand-600 text-white font-bold">保存する</button>
+    </div>
+  </div>
+
+  <!-- ===============================
+       削除確認ダイアログ
+  =============================== -->
+  <div id="confirmDialog" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs hidden flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-xs rounded-3xl p-5 text-center space-y-3">
+      <div class="w-10 h-10 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center text-lg mx-auto">
         <i class="fa-solid fa-trash-can"></i>
       </div>
       <div>
-        <h4 class="font-bold text-slate-800 text-base">明細を削除しますか？</h4>
-        <p class="text-xs text-slate-500 mt-1">この操作はルーム内の全員に反映されます。</p>
+        <h4 class="font-bold text-slate-800 text-sm">明細を削除しますか？</h4>
+        <p class="text-[11px] text-slate-500 mt-0.5">相手の画面からも削除されます。</p>
       </div>
-      <div class="flex items-center justify-center gap-3 pt-2">
-        <button id="btnCancelConfirm" class="flex-1 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50">キャンセル</button>
-        <button id="btnProceedConfirm" class="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-xs font-bold text-white shadow-md">削除する</button>
+      <div class="flex gap-2 pt-1">
+        <button id="btnCancelConfirm" class="flex-1 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600">キャンセル</button>
+        <button id="btnProceedConfirm" class="flex-1 py-2 rounded-xl bg-rose-600 text-xs font-bold text-white shadow-xs">削除</button>
       </div>
     </div>
   </div>
 
-  <!-- トースト通知コンテナ -->
-  <div id="toastContainer" class="fixed top-5 right-5 z-50 space-y-2 pointer-events-none"></div>
+  <!-- トースト通知 -->
+  <div id="toastContainer" class="fixed top-4 right-4 left-4 z-50 space-y-2 pointer-events-none flex flex-col items-center"></div>
 
   <!-- ===============================
        JavaScript アプリケーションロジック
   =============================== -->
-  <script type="module">
-    // Firebase 公式モジュールインポート（Canvas環境用）
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-    import { getFirestore, doc, collection, addDoc, updateDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
+  <script>
     /* ========================================================
-       0. 安全ストレージラッパー
+       0. 安全ストレージラッパー (Safariプライベートブラウズ対応)
     ======================================================== */
     const safeStorage = {
       getItem(key) {
-        try {
-          return window.localStorage.getItem(key);
-        } catch (e) {
-          return this._mem ? this._mem[key] : null;
-        }
+        try { return window.localStorage.getItem(key); } catch (e) { return this._mem?.[key] || null; }
       },
       setItem(key, val) {
-        try {
-          window.localStorage.setItem(key, val);
-        } catch (e) {
+        try { window.localStorage.setItem(key, val); } catch (e) {
           if (!this._mem) this._mem = {};
           this._mem[key] = val;
         }
@@ -674,40 +594,40 @@
     };
 
     /* ========================================================
-       1. 基本定数・カテゴリ定義
+       1. カテゴリ定義
     ======================================================== */
     const EXPENSE_CATEGORIES = [
-      { name: '食費', icon: 'fa-utensils', color: 'bg-orange-100 text-orange-600' },
-      { name: '日用品', icon: 'fa-basket-shopping', color: 'bg-emerald-100 text-emerald-600' },
-      { name: '住居費', icon: 'fa-house', color: 'bg-blue-100 text-blue-600' },
-      { name: '光熱水道', icon: 'fa-bolt', color: 'bg-amber-100 text-amber-600' },
-      { name: '交通費', icon: 'fa-train-subway', color: 'bg-indigo-100 text-indigo-600' },
-      { name: '交際費', icon: 'fa-wine-glass', color: 'bg-pink-100 text-pink-600' },
-      { name: '趣味娯楽', icon: 'fa-gamepad', color: 'bg-purple-100 text-purple-600' },
-      { name: '医療健康', icon: 'fa-notes-medical', color: 'bg-red-100 text-red-600' },
-      { name: '衣服美容', icon: 'fa-shirt', color: 'bg-teal-100 text-teal-600' },
-      { name: '雑費・他', icon: 'fa-ellipsis', color: 'bg-slate-100 text-slate-600' },
+      { name: '食費', icon: 'fa-utensils', color: 'text-orange-600 bg-orange-100' },
+      { name: '日用品', icon: 'fa-basket-shopping', color: 'text-emerald-600 bg-emerald-100' },
+      { name: '外食・カフェ', icon: 'fa-mug-hot', color: 'text-amber-600 bg-amber-100' },
+      { name: '住居費', icon: 'fa-house', color: 'text-blue-600 bg-blue-100' },
+      { name: '光熱水道', icon: 'fa-bolt', color: 'text-yellow-600 bg-yellow-100' },
+      { name: '交通費', icon: 'fa-train-subway', color: 'text-indigo-600 bg-indigo-100' },
+      { name: '交際費', icon: 'fa-wine-glass', color: 'text-pink-600 bg-pink-100' },
+      { name: '趣味娯楽', icon: 'fa-gamepad', color: 'text-purple-600 bg-purple-100' },
+      { name: '医療健康', icon: 'fa-notes-medical', color: 'text-red-600 bg-red-100' },
+      { name: '衣服美容', icon: 'fa-shirt', color: 'text-teal-600 bg-teal-100' },
+      { name: '雑費・他', icon: 'fa-ellipsis', color: 'text-slate-600 bg-slate-100' },
     ];
 
     const INCOME_CATEGORIES = [
-      { name: '給料', icon: 'fa-money-bill-wave', color: 'bg-emerald-100 text-emerald-700' },
-      { name: '賞与', icon: 'fa-gift', color: 'bg-amber-100 text-amber-700' },
-      { name: '副業収入', icon: 'fa-laptop-code', color: 'bg-indigo-100 text-indigo-700' },
-      { name: '臨時収入', icon: 'fa-coins', color: 'bg-sky-100 text-sky-700' },
-      { name: 'その他', icon: 'fa-circle-dollar-to-slot', color: 'bg-slate-100 text-slate-600' },
+      { name: '給料', icon: 'fa-money-bill-wave', color: 'text-emerald-700 bg-emerald-100' },
+      { name: '賞与', icon: 'fa-gift', color: 'text-amber-700 bg-amber-100' },
+      { name: '副業収入', icon: 'fa-laptop-code', color: 'text-indigo-700 bg-indigo-100' },
+      { name: '臨時収入', icon: 'fa-coins', color: 'text-sky-700 bg-sky-100' },
+      { name: 'その他', icon: 'fa-circle-dollar-to-slot', color: 'text-slate-600 bg-slate-100' },
     ];
 
     /* ========================================================
-       2. アプリケーション状態管理
+       2. 状態管理
     ======================================================== */
     const state = {
-      appId: typeof __app_id !== 'undefined' ? __app_id : 'pairbook-kakeibo-v1',
       roomId: getInitialRoomId(),
-      userId: safeStorage.getItem('pairbook_uid') || ('user_' + Math.random().toString(36).substring(2, 10)),
-      userName: safeStorage.getItem('pairbook_username') || ('ユーザー' + Math.floor(10 + Math.random() * 90)),
-      userColor: safeStorage.getItem('pairbook_usercolor') || getRandomColor(),
+      userId: safeStorage.getItem('pb_uid') || ('u_' + Math.random().toString(36).substring(2, 9)),
+      userName: safeStorage.getItem('pb_uname') || ('ユーザー' + Math.floor(10 + Math.random() * 90)),
+      userColor: safeStorage.getItem('pb_color') || getRandomColor(),
       records: [],
-      onlineUsers: {}, // userId -> { userName, color, lastSeen }
+      onlineUsers: {},
       currentCalendarDate: new Date(),
       selectedCalendarDay: formatDateYMD(new Date()),
       activeTab: 'calendar',
@@ -715,13 +635,13 @@
       selectedCategory: '食費',
       graphScope: 'shared',
       analyticsMonth: formatYearMonth(new Date()),
-      syncMode: 'connecting', // 'firebase' or 'mqtt' or 'local'
-      charts: { pie: null, bar: null }
+      charts: { pie: null, bar: null },
+      lastUpdated: 0
     };
 
-    safeStorage.setItem('pairbook_uid', state.userId);
-    safeStorage.setItem('pairbook_username', state.userName);
-    safeStorage.setItem('pairbook_usercolor', state.userColor);
+    safeStorage.setItem('pb_uid', state.userId);
+    safeStorage.setItem('pb_uname', state.userName);
+    safeStorage.setItem('pb_color', state.userColor);
 
     function getRandomColor() {
       const colors = ['#4f46e5', '#059669', '#dc2626', '#d97706', '#7c3aed', '#db2777', '#0284c7'];
@@ -731,17 +651,15 @@
     function getInitialRoomId() {
       try {
         const urlParams = new URLSearchParams(window.location.search);
-        const roomFromUrl = urlParams.get('room');
-        if (roomFromUrl && roomFromUrl.trim() !== '') {
-          return roomFromUrl.trim().toUpperCase();
-        }
+        const r = urlParams.get('room');
+        if (r && r.trim() !== '') return r.trim().toUpperCase();
       } catch (e) {}
-      return safeStorage.getItem('pairbook_room_id') || 'HOME101';
+      return safeStorage.getItem('pb_room') || 'HOME101';
     }
 
     function setRoomId(newId) {
       state.roomId = newId.trim().toUpperCase();
-      safeStorage.setItem('pairbook_room_id', state.roomId);
+      safeStorage.setItem('pb_room', state.roomId);
 
       try {
         const newUrl = `${window.location.pathname}?room=${encodeURIComponent(state.roomId)}`;
@@ -751,203 +669,91 @@
       document.getElementById('currentRoomDisplay').textContent = state.roomId;
       document.getElementById('inputRoomId').value = state.roomId;
 
-      // ストレージから既存レコードを復元
       loadCachedRecords();
-      // 同期接続を再確立
-      connectSyncEngine();
-      showToast(`ルーム「${state.roomId}」に移動しました`, 'info');
+      initGunEngine();
+      showToast(`部屋「${state.roomId}」に切り替えました`, 'info');
     }
 
     /* ========================================================
-       3. ハイブリッド同期エンジン (Firebase & MQTT WebSockets)
-       ※ GitHub Pagesでも設定不要で全世界リアルタイム同期
+       3. GunDB 分散リアルタイム同期エンジン
+       (サーバー不要・GitHub Pages等で確実に別ブラウザ同期)
     ======================================================== */
-    let db = null;
-    let auth = null;
-    let mqttClient = null;
-    let unsubscribeFirestore = null;
+    let gun = null;
+    let roomRef = null;
 
-    async function initSync() {
-      // 1. ローカルキャッシュの復元
-      loadCachedRecords();
-
-      // 2. Firebase環境判定
-      if (typeof __firebase_config !== 'undefined') {
-        try {
-          const firebaseConfig = JSON.parse(__firebase_config);
-          const app = initializeApp(firebaseConfig);
-          auth = getAuth(app);
-          db = getFirestore(app);
-
-          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(auth, __initial_auth_token);
-          } else {
-            await signInAnonymously(auth);
-          }
-
-          onAuthStateChanged(auth, (user) => {
-            if (user) {
-              state.userId = user.uid;
-              state.syncMode = 'firebase';
-              updateSyncStatus('オンライン同期中', 'emerald');
-              listenFirebase();
-            }
-          });
-          return;
-        } catch (e) {
-          console.warn('Firebase init fallback to MQTT', e);
-        }
-      }
-
-      // 3. GitHub Pagesなど外部環境: 高速・無料WebSocket (MQTT) で同期
-      connectMqttEngine();
-    }
-
-    function connectSyncEngine() {
-      if (state.syncMode === 'firebase') {
-        listenFirebase();
-      } else {
-        connectMqttEngine();
-      }
-    }
-
-    /* --- MQTT WebSocket 同期 (GitHub Pages向け) --- */
-    function connectMqttEngine() {
-      if (mqttClient) {
-        try { mqttClient.end(); } catch (e) {}
-      }
-
-      updateSyncStatus('接続中...', 'amber');
-
-      // 公開高速WebSocketブローカー (TLS暗号化・CORS対応)
-      const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
-      const clientId = 'pb_' + state.userId + '_' + Math.random().toString(16).substring(2, 6);
-
+    function initGunEngine() {
       try {
-        mqttClient = mqtt.connect(brokerUrl, {
-          clientId: clientId,
-          clean: true,
-          connectTimeout: 5000,
-          reconnectPeriod: 3000
-        });
+        // 世界中の信頼性の高いパブリックリレーサーバーを複数指定
+        const peers = [
+          'https://gun-manhattan.herokuapp.com/gun',
+          'https://relay.peer.ooo/gun',
+          'https://peer.wallarm.com/gun'
+        ];
 
-        const topicSync = `pairbook-sync-v2/${state.roomId}/data`;
-        const topicPresence = `pairbook-sync-v2/${state.roomId}/presence`;
+        gun = Gun({ peers: peers, localStorage: true });
+        roomRef = gun.get('pairbook_kakeibo_v4').get(state.roomId);
 
-        mqttClient.on('connect', () => {
-          state.syncMode = 'mqtt';
-          updateSyncStatus('オンライン同期中', 'emerald');
-          mqttClient.subscribe([topicSync, topicPresence]);
+        updateSyncBadge('接続中', 'amber');
 
-          // 入室を通知
-          sendPresence();
-
-          // 部屋の最新データをリクエスト
-          mqttClient.publish(topicPresence, JSON.stringify({
-            type: 'request_sync',
-            userId: state.userId
-          }));
-        });
-
-        mqttClient.on('message', (topic, payload) => {
+        // 部屋のデータ変更を購読（相手が書き込んだ瞬間に発火）
+        roomRef.get('records_data').on((data, key) => {
+          if (!data) return;
           try {
-            const data = JSON.parse(payload.toString());
-
-            // プレゼンス（参加者検知）
-            if (topic === topicPresence) {
-              handlePresenceMessage(data);
-              return;
-            }
-
-            // データ同期
-            if (topic === topicSync) {
-              if (data.senderId === state.userId) return; // 自分の送信はスキップ
-
-              if (data.type === 'full_sync' && Array.isArray(data.records)) {
-                state.records = data.records;
-                saveCachedRecords();
-                renderAll();
-                showToast(`${escapeHtml(data.senderName || 'パートナー')}から家計簿を同期しました`, 'info');
-              } else if (data.type === 'record_added') {
-                state.records = state.records.filter(r => r.id !== data.record.id);
-                state.records.unshift(data.record);
-                saveCachedRecords();
-                renderAll();
-                showToast(`${escapeHtml(data.senderName)}さんが記帳を追加しました！`, 'info');
-              } else if (data.type === 'record_deleted') {
-                state.records = state.records.filter(r => r.id !== data.recordId);
-                saveCachedRecords();
-                renderAll();
-                showToast(`${escapeHtml(data.senderName)}さんが明細を削除しました`, 'info');
+            const parsed = JSON.parse(data);
+            if (Array.isArray(parsed.items) && parsed.timestamp > (state.lastUpdated || 0)) {
+              state.records = parsed.items;
+              state.lastUpdated = parsed.timestamp;
+              saveCachedRecords();
+              renderAll();
+              updateSyncBadge('同期完了', 'emerald');
+              if (parsed.senderName && parsed.senderId !== state.userId) {
+                showToast(`${escapeHtml(parsed.senderName)}さんが明細を更新しました`, 'info');
               }
             }
-          } catch (err) {
-            console.error('MQTT parse error:', err);
+          } catch (e) {
+            console.error('Data parse error', e);
           }
         });
 
-        mqttClient.on('error', (err) => {
-          console.warn('MQTT Connection error', err);
-          updateSyncStatus('再接続中', 'amber');
+        // 相手のオンライン検知（プレゼンス）
+        roomRef.get('presence').map().on((userData, uid) => {
+          if (!userData) return;
+          try {
+            const u = typeof userData === 'string' ? JSON.parse(userData) : userData;
+            if (Date.now() - u.lastSeen < 18000) {
+              state.onlineUsers[uid] = u;
+              renderOnlineMembers();
+            }
+          } catch(e){}
         });
 
-        mqttClient.on('close', () => {
-          updateSyncStatus('接続待機中', 'slate');
-        });
+        sendPresence();
+        updateSyncBadge('同期中', 'emerald');
 
       } catch (err) {
-        console.error('MQTT setup failed', err);
-        updateSyncStatus('ローカル動作中', 'slate');
+        console.error('GunDB init error', err);
+        updateSyncBadge('ローカル', 'slate');
       }
     }
 
-    /* --- プレゼンス（参加者）管理 --- */
     function sendPresence() {
-      if (!mqttClient || !mqttClient.connected) return;
-      const topicPresence = `pairbook-sync-v2/${state.roomId}/presence`;
-      mqttClient.publish(topicPresence, JSON.stringify({
-        type: 'ping',
-        userId: state.userId,
-        userName: state.userName,
-        userColor: state.userColor,
-        timestamp: Date.now()
-      }));
+      if (!roomRef) return;
+      try {
+        roomRef.get('presence').get(state.userId).put(JSON.stringify({
+          name: state.userName,
+          color: state.userColor,
+          lastSeen: Date.now()
+        }));
+      } catch (e) {}
     }
 
-    function handlePresenceMessage(data) {
-      if (!data) return;
-
-      // 誰かが最新データを求めて入室してきた時、自分がデータを持っていれば送信して助ける
-      if (data.type === 'request_sync' && data.userId !== state.userId) {
-        if (state.records.length > 0 && mqttClient && mqttClient.connected) {
-          const topicSync = `pairbook-sync-v2/${state.roomId}/data`;
-          mqttClient.publish(topicSync, JSON.stringify({
-            type: 'full_sync',
-            senderId: state.userId,
-            senderName: state.userName,
-            records: state.records
-          }));
-        }
-      }
-
-      if (data.type === 'ping') {
-        state.onlineUsers[data.userId] = {
-          name: data.userName || 'ゲスト',
-          color: data.userColor || '#4f46e5',
-          lastSeen: Date.now(),
-          isMe: data.userId === state.userId
-        };
-        renderOnlineMembers();
-      }
-    }
-
-    // 4秒おきに自分の存在を周囲に発信 & 15秒以上音信のないユーザーを退出扱いにする
+    // 定期的なハートビート送信（4秒おき）
     setInterval(() => {
       sendPresence();
       const now = Date.now();
       let changed = false;
       Object.keys(state.onlineUsers).forEach(uid => {
-        if (now - state.onlineUsers[uid].lastSeen > 12000 && !state.onlineUsers[uid].isMe) {
+        if (now - state.onlineUsers[uid].lastSeen > 20000 && uid !== state.userId) {
           delete state.onlineUsers[uid];
           changed = true;
         }
@@ -959,143 +765,91 @@
       const container = document.getElementById('onlineMembersList');
       container.innerHTML = '';
 
-      // 自分を必ず先頭に
+      // 自分を登録
       state.onlineUsers[state.userId] = {
         name: state.userName,
         color: state.userColor,
-        lastSeen: Date.now(),
-        isMe: true
+        lastSeen: Date.now()
       };
 
       Object.entries(state.onlineUsers).forEach(([uid, u]) => {
+        const isMe = uid === state.userId;
         const badge = document.createElement('div');
-        badge.className = 'flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-slate-200 shadow-xs text-slate-700 animate-in fade-in duration-200';
+        badge.className = 'flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-700 text-[11px] font-bold shadow-xs';
         badge.innerHTML = `
-          <span class="w-3.5 h-3.5 rounded-full text-white text-[9px] font-bold flex items-center justify-center" style="background-color: ${u.color};">
-            ${escapeHtml(u.name.substring(0, 1))}
+          <span class="w-3.5 h-3.5 rounded-full text-white text-[9px] flex items-center justify-center font-bold" style="background-color: ${u.color || '#4f46e5'}">
+            ${escapeHtml((u.name || 'ユ').substring(0, 1))}
           </span>
-          <span class="font-bold text-[11px]">${escapeHtml(u.name)}${u.isMe ? ' (私)' : ''}</span>
+          <span class="truncate max-w-[65px]">${escapeHtml(u.name)}${isMe ? ' (私)' : ''}</span>
           <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
         `;
         container.appendChild(badge);
       });
     }
 
-    /* --- Firebase Firestore同期（Canvasプレビュー時） --- */
-    function listenFirebase() {
-      if (!db || !state.userId) return;
-      if (unsubscribeFirestore) unsubscribeFirestore();
-
-      const recordsCol = collection(db, 'artifacts', state.appId, 'public', 'data', 'household_records');
-
-      unsubscribeFirestore = onSnapshot(recordsCol, (snapshot) => {
-        const fetched = [];
-        snapshot.forEach(docSnap => {
-          const data = docSnap.data();
-          if (data.roomId === state.roomId) {
-            if (data.isShared || data.createdById === state.userId) {
-              fetched.push({ id: docSnap.id, ...data });
-            }
-          }
-        });
-        fetched.sort((a, b) => new Date(b.date) - new Date(a.date));
-        state.records = fetched;
-        saveCachedRecords();
-        renderAll();
-      }, (err) => {
-        console.error('Firestore snapshot error', err);
-      });
+    function updateSyncBadge(text, color) {
+      const el = document.getElementById('syncStatusBadge');
+      const textEl = document.getElementById('syncStatusText');
+      el.className = `flex items-center gap-1 px-2 py-1 rounded-full text-[10px] bg-${color}-50 text-${color}-700 border border-${color}-200 font-bold`;
+      textEl.textContent = text;
     }
 
-    /* --- キャッシュ読み書き --- */
+    /* ========================================================
+       4. データ保存・削除（クラウド自動送信）
+    ======================================================== */
+    function syncToCloud() {
+      state.lastUpdated = Date.now();
+      saveCachedRecords();
+
+      if (roomRef) {
+        try {
+          const payload = JSON.stringify({
+            items: state.records,
+            timestamp: state.lastUpdated,
+            senderId: state.userId,
+            senderName: state.userName
+          });
+          roomRef.get('records_data').put(payload);
+          updateSyncBadge('同期完了', 'emerald');
+        } catch (e) {
+          console.error('Sync put error', e);
+        }
+      }
+    }
+
+    function saveRecord(recordData) {
+      if (!recordData.id) {
+        recordData.id = 'r_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+        recordData.createdAt = new Date().toISOString();
+        recordData.createdById = state.userId;
+      }
+      state.records = state.records.filter(r => r.id !== recordData.id);
+      state.records.unshift(recordData);
+      state.records.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      renderAll();
+      syncToCloud();
+    }
+
+    function deleteRecord(recordId) {
+      state.records = state.records.filter(r => r.id !== recordId);
+      renderAll();
+      syncToCloud();
+    }
+
     function loadCachedRecords() {
-      const key = `pairbook_data_${state.roomId}`;
-      const saved = safeStorage.getItem(key);
+      const saved = safeStorage.getItem(`pb_cache_${state.roomId}`);
       if (saved) {
         try {
           state.records = JSON.parse(saved);
-        } catch (e) {}
+        } catch(e){}
       } else {
         setupSampleRecords();
       }
     }
 
     function saveCachedRecords() {
-      const key = `pairbook_data_${state.roomId}`;
-      safeStorage.setItem(key, JSON.stringify(state.records));
-    }
-
-    function updateSyncStatus(text, color) {
-      const el = document.getElementById('syncStatus');
-      el.className = `flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] bg-${color}-50 text-${color}-700 border border-${color}-200 transition-all`;
-      el.innerHTML = `<span class="w-2 h-2 rounded-full bg-${color}-500 animate-pulse"></span><span>${text}</span>`;
-    }
-
-    /* ========================================================
-       4. データCRUD操作
-    ======================================================== */
-    async function saveRecord(recordData) {
-      // 1. Firebase環境の場合
-      if (db && state.syncMode === 'firebase') {
-        const recordsCol = collection(db, 'artifacts', state.appId, 'public', 'data', 'household_records');
-        if (recordData.id) {
-          const docRef = doc(db, 'artifacts', state.appId, 'public', 'data', 'household_records', recordData.id);
-          const { id, ...payload } = recordData;
-          payload.updatedAt = new Date().toISOString();
-          await updateDoc(docRef, payload);
-        } else {
-          recordData.createdAt = new Date().toISOString();
-          recordData.createdById = state.userId;
-          recordData.roomId = state.roomId;
-          await addDoc(recordsCol, recordData);
-        }
-        return;
-      }
-
-      // 2. MQTT (GitHub Pages) 環境の場合
-      if (!recordData.id) {
-        recordData.id = 'rec_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-        recordData.createdById = state.userId;
-        recordData.createdAt = new Date().toISOString();
-      }
-
-      state.records = state.records.filter(r => r.id !== recordData.id);
-      state.records.unshift(recordData);
-      state.records.sort((a, b) => new Date(b.date) - new Date(a.date));
-      saveCachedRecords();
-      renderAll();
-
-      if (mqttClient && mqttClient.connected) {
-        const topicSync = `pairbook-sync-v2/${state.roomId}/data`;
-        mqttClient.publish(topicSync, JSON.stringify({
-          type: 'record_added',
-          senderId: state.userId,
-          senderName: state.userName,
-          record: recordData
-        }));
-      }
-    }
-
-    async function deleteRecord(recordId) {
-      if (db && state.syncMode === 'firebase') {
-        const docRef = doc(db, 'artifacts', state.appId, 'public', 'data', 'household_records', recordId);
-        await deleteDoc(docRef);
-        return;
-      }
-
-      state.records = state.records.filter(r => r.id !== recordId);
-      saveCachedRecords();
-      renderAll();
-
-      if (mqttClient && mqttClient.connected) {
-        const topicSync = `pairbook-sync-v2/${state.roomId}/data`;
-        mqttClient.publish(topicSync, JSON.stringify({
-          type: 'record_deleted',
-          senderId: state.userId,
-          senderName: state.userName,
-          recordId: recordId
-        }));
-      }
+      safeStorage.setItem(`pb_cache_${state.roomId}`, JSON.stringify(state.records));
     }
 
     /* ========================================================
@@ -1104,16 +858,14 @@
     function renderAll() {
       renderCalendar();
       renderSelectedDayRecords();
-      renderRecordsTable();
+      renderRecordsCardList();
       renderSettlement();
       renderAnalytics();
-      populateFilterCategories();
     }
 
     function renderCalendar() {
       const year = state.currentCalendarDate.getFullYear();
       const month = state.currentCalendarDate.getMonth();
-
       document.getElementById('calendarTitle').textContent = `${year}年 ${month + 1}月`;
 
       const currentMonthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
@@ -1131,29 +883,31 @@
       const balance = totalInc - totalExp;
       const balEl = document.getElementById('monthBalanceTotal');
       balEl.textContent = `${balance >= 0 ? '+' : ''}¥${balance.toLocaleString()}`;
-      balEl.className = `text-base sm:text-lg font-bold ${balance >= 0 ? 'text-brand-700' : 'text-rose-700'}`;
+      balEl.className = `text-sm sm:text-base font-extrabold ${balance >= 0 ? 'text-indigo-700' : 'text-rose-700'}`;
 
-      const firstDayOfMonth = new Date(year, month, 1).getDay();
-      const lastDateOfMonth = new Date(year, month + 1, 0).getDate();
-      const lastDateOfPrevMonth = new Date(year, month, 0).getDate();
+      const firstDay = new Date(year, month, 1).getDay();
+      const lastDate = new Date(year, month + 1, 0).getDate();
+      const prevLastDate = new Date(year, month, 0).getDate();
 
       const grid = document.getElementById('calendarGrid');
       grid.innerHTML = '';
       const todayStr = formatDateYMD(new Date());
 
-      for (let i = firstDayOfMonth - 1; i >= 0; i--) {
-        const d = lastDateOfPrevMonth - i;
+      // 前月のはみ出し
+      for (let i = firstDay - 1; i >= 0; i--) {
+        const d = prevLastDate - i;
         grid.appendChild(createCalendarCell(d, true, null));
       }
 
-      for (let d = 1; d <= lastDateOfMonth; d++) {
+      // 当月
+      for (let d = 1; d <= lastDate; d++) {
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         const dayRecords = state.records.filter(r => r.date === dateStr);
         grid.appendChild(createCalendarCell(d, false, dateStr, dayRecords, dateStr === todayStr, dateStr === state.selectedCalendarDay));
       }
 
-      const totalCells = firstDayOfMonth + lastDateOfMonth;
-      const remaining = (7 - (totalCells % 7)) % 7;
+      // 翌月のはみ出し
+      const remaining = (7 - ((firstDay + lastDate) % 7)) % 7;
       for (let d = 1; d <= remaining; d++) {
         grid.appendChild(createCalendarCell(d, true, null));
       }
@@ -1161,58 +915,45 @@
 
     function createCalendarCell(dayNum, isOtherMonth, dateStr, dayRecords = [], isToday = false, isSelected = false) {
       const cell = document.createElement('div');
-      cell.className = `min-h-[70px] sm:min-h-[85px] p-1.5 flex flex-col justify-between transition cursor-pointer select-none ${
-        isOtherMonth ? 'bg-slate-50/50 text-slate-300 pointer-events-none' : 'hover:bg-brand-50/40 bg-white'
-      } ${isSelected ? 'ring-2 ring-brand-500 bg-brand-50/30' : ''}`;
+      cell.className = `min-h-[58px] sm:min-h-[70px] p-1 flex flex-col justify-between transition cursor-pointer select-none ${
+        isOtherMonth ? 'bg-slate-50/50 text-slate-300 pointer-events-none' : 'hover:bg-brand-50/30 bg-white'
+      } ${isSelected ? 'ring-2 ring-brand-500 bg-brand-50/40 z-10' : ''}`;
 
       if (isOtherMonth) {
-        cell.innerHTML = `<span class="text-xs font-medium text-slate-300 ml-1">${dayNum}</span>`;
+        cell.innerHTML = `<span class="text-[10px] text-slate-300 ml-0.5">${dayNum}</span>`;
         return cell;
       }
 
-      const header = document.createElement('div');
-      header.className = 'flex items-center justify-between';
-
+      const top = document.createElement('div');
+      top.className = 'flex items-center justify-between';
       const numSpan = document.createElement('span');
-      numSpan.className = `text-xs font-semibold px-1.5 py-0.5 rounded-full ${
-        isToday ? 'bg-brand-600 text-white font-bold' : 'text-slate-700'
+      numSpan.className = `text-[11px] font-bold px-1.5 py-0.2 rounded-full ${
+        isToday ? 'bg-brand-600 text-white' : 'text-slate-700'
       }`;
       numSpan.textContent = dayNum;
-      header.appendChild(numSpan);
+      top.appendChild(numSpan);
 
       if (dayRecords.length > 0) {
-        const countSpan = document.createElement('span');
-        countSpan.className = 'text-[9px] px-1 py-0.2 bg-slate-100 rounded text-slate-500 font-mono';
-        countSpan.textContent = `${dayRecords.length}件`;
-        header.appendChild(countSpan);
+        const badge = document.createElement('span');
+        badge.className = 'text-[9px] text-slate-400 font-bold';
+        badge.textContent = `${dayRecords.length}`;
+        top.appendChild(badge);
       }
-      cell.appendChild(header);
+      cell.appendChild(top);
 
-      const badgeContainer = document.createElement('div');
-      badgeContainer.className = 'space-y-0.5 mt-1';
-
+      // 支出/収入バッジ
+      const badgeBox = document.createElement('div');
+      badgeBox.className = 'space-y-0.5 text-[9px] leading-tight font-extrabold';
       let dayExp = 0;
-      let dayInc = 0;
-
-      dayRecords.forEach(r => {
-        if (r.type === 'expense') dayExp += Number(r.amount);
-        if (r.type === 'income') dayInc += Number(r.amount);
-      });
+      dayRecords.forEach(r => { if (r.type === 'expense') dayExp += Number(r.amount); });
 
       if (dayExp > 0) {
-        const expBadge = document.createElement('div');
-        expBadge.className = 'text-[10px] leading-tight text-rose-600 font-medium truncate flex items-center justify-between';
-        expBadge.innerHTML = `<span class="truncate">支出</span><span>¥${dayExp > 9999 ? Math.round(dayExp/1000) + 'k' : dayExp.toLocaleString()}</span>`;
-        badgeContainer.appendChild(expBadge);
+        const b = document.createElement('div');
+        b.className = 'text-rose-600 truncate bg-rose-50/80 px-1 py-0.2 rounded text-[8px] sm:text-[9px]';
+        b.textContent = `¥${dayExp > 9999 ? Math.round(dayExp/1000) + 'k' : dayExp.toLocaleString()}`;
+        badgeBox.appendChild(b);
       }
-      if (dayInc > 0) {
-        const incBadge = document.createElement('div');
-        incBadge.className = 'text-[10px] leading-tight text-emerald-600 font-medium truncate flex items-center justify-between';
-        incBadge.innerHTML = `<span class="truncate">収入</span><span>¥${dayInc > 9999 ? Math.round(dayInc/1000) + 'k' : dayInc.toLocaleString()}</span>`;
-        badgeContainer.appendChild(incBadge);
-      }
-
-      cell.appendChild(badgeContainer);
+      cell.appendChild(badgeBox);
 
       cell.addEventListener('click', () => {
         state.selectedCalendarDay = dateStr;
@@ -1229,150 +970,111 @@
 
       if (!state.selectedCalendarDay) {
         titleEl.textContent = '日付を選択してください';
-        listEl.innerHTML = '<p class="text-slate-400 text-center py-6 text-xs">カレンダーの日付をクリックしてください</p>';
+        listEl.innerHTML = '<p class="text-slate-400 text-center py-4 text-xs">カレンダーの日付をタップしてください</p>';
         return;
       }
 
       const dayObj = new Date(state.selectedCalendarDay);
       const weekDays = ['日', '月', '火', '水', '木', '金', '土'];
-      const weekDay = weekDays[dayObj.getDay()];
-      titleEl.innerHTML = `${state.selectedCalendarDay} (${weekDay}) の家計簿`;
+      titleEl.innerHTML = `<i class="fa-regular fa-calendar-check text-brand-600"></i> ${state.selectedCalendarDay} (${weekDays[dayObj.getDay()]}) の明細`;
 
       const dayRecords = state.records.filter(r => r.date === state.selectedCalendarDay);
 
       if (dayRecords.length === 0) {
-        listEl.innerHTML = `
-          <div class="text-center py-8 text-slate-400 space-y-2">
-            <i class="fa-regular fa-calendar-xmark text-2xl text-slate-300"></i>
-            <p class="text-xs">この日の記帳データはまだありません</p>
-          </div>
-        `;
+        listEl.innerHTML = '<p class="text-slate-400 text-center py-4 text-xs">この日の明細はまだありません</p>';
         return;
       }
 
       listEl.innerHTML = '';
       dayRecords.forEach(rec => {
-        const isExp = rec.type === 'expense';
-        const item = document.createElement('div');
-        item.className = 'flex items-center justify-between p-3 rounded-xl bg-slate-50 hover:bg-slate-100 transition border border-slate-100 text-xs';
-
-        item.innerHTML = `
-          <div class="flex items-center gap-3">
-            <div class="w-8 h-8 rounded-xl flex items-center justify-center ${isExp ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}">
-              <i class="fa-solid ${getCategoryIcon(rec.category)}"></i>
-            </div>
-            <div>
-              <div class="flex items-center gap-1.5 font-bold text-slate-800">
-                <span>${escapeHtml(rec.category)}</span>
-                ${rec.isShared ? '<span class="px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-700 text-[9px] font-semibold">共有</span>' : '<span class="px-1.5 py-0.2 rounded bg-slate-200 text-slate-600 text-[9px]">個人</span>'}
-              </div>
-              <p class="text-[11px] text-slate-500 truncate max-w-[180px] sm:max-w-xs">${escapeHtml(rec.memo || rec.payer || 'メモなし')}</p>
-            </div>
-          </div>
-          <div class="flex items-center gap-3">
-            <span class="font-bold text-sm ${isExp ? 'text-rose-600' : 'text-emerald-600'}">
-              ${isExp ? '-' : '+'}¥${Number(rec.amount).toLocaleString()}
-            </span>
-            <div class="flex items-center gap-1">
-              <button class="btn-edit-rec p-1.5 text-slate-400 hover:text-brand-600 rounded-lg hover:bg-white" data-id="${rec.id}">
-                <i class="fa-solid fa-pen"></i>
-              </button>
-              <button class="btn-delete-rec p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-white" data-id="${rec.id}">
-                <i class="fa-solid fa-trash"></i>
-              </button>
-            </div>
-          </div>
-        `;
-
-        item.querySelector('.btn-edit-rec').addEventListener('click', () => openRecordModalForEdit(rec));
-        item.querySelector('.btn-delete-rec').addEventListener('click', () => confirmDeleteRecord(rec.id));
-        listEl.appendChild(item);
+        listEl.appendChild(createRecordItemCard(rec));
       });
     }
 
-    function renderRecordsTable() {
-      const tbody = document.getElementById('recordsTableBody');
+    function renderRecordsCardList() {
+      const container = document.getElementById('recordsCardList');
       const emptyNotice = document.getElementById('noRecordsNotice');
 
       const filterType = document.getElementById('filterType').value;
       const filterSharing = document.getElementById('filterSharing').value;
-      const filterCategory = document.getElementById('filterCategory').value;
 
       let filtered = state.records.filter(r => {
         if (filterType !== 'all' && r.type !== filterType) return false;
         if (filterSharing === 'shared' && !r.isShared) return false;
         if (filterSharing === 'private' && r.isShared) return false;
-        if (filterCategory !== 'all' && r.category !== filterCategory) return false;
         return true;
       });
 
       if (filtered.length === 0) {
-        tbody.innerHTML = '';
+        container.innerHTML = '';
         emptyNotice.classList.remove('hidden');
         return;
       }
 
       emptyNotice.classList.add('hidden');
-      tbody.innerHTML = '';
-
+      container.innerHTML = '';
       filtered.forEach(rec => {
-        const isExp = rec.type === 'expense';
-        const tr = document.createElement('tr');
-        tr.className = 'hover:bg-slate-50/80 transition';
-
-        tr.innerHTML = `
-          <td class="py-3 px-4 font-mono font-medium text-slate-600">${escapeHtml(rec.date)}</td>
-          <td class="py-3 px-4">
-            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold ${isExp ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}">
-              <i class="fa-solid ${getCategoryIcon(rec.category)}"></i>
-              ${escapeHtml(rec.category)}
-            </span>
-          </td>
-          <td class="py-3 px-4 text-slate-700 max-w-xs truncate">${escapeHtml(rec.memo || '-')}</td>
-          <td class="py-3 px-4 text-slate-600 font-medium">${escapeHtml(rec.payer || '未指定')}</td>
-          <td class="py-3 px-4">
-            ${rec.isShared ? 
-              '<span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-700">共有</span>' : 
-              '<span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-500">個人</span>'
-            }
-          </td>
-          <td class="py-3 px-4 text-right font-bold text-sm ${isExp ? 'text-rose-600' : 'text-emerald-600'}">
-            ${isExp ? '-' : '+'}¥${Number(rec.amount).toLocaleString()}
-          </td>
-          <td class="py-3 px-4 text-center">
-            <div class="inline-flex items-center gap-1">
-              <button class="p-1.5 text-slate-400 hover:text-brand-600 rounded-lg hover:bg-slate-100 transition btn-edit">
-                <i class="fa-solid fa-pen"></i>
-              </button>
-              <button class="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100 transition btn-del">
-                <i class="fa-solid fa-trash"></i>
-              </button>
-            </div>
-          </td>
-        `;
-
-        tr.querySelector('.btn-edit').addEventListener('click', () => openRecordModalForEdit(rec));
-        tr.querySelector('.btn-del').addEventListener('click', () => confirmDeleteRecord(rec.id));
-        tbody.appendChild(tr);
+        container.appendChild(createRecordItemCard(rec, true));
       });
+    }
+
+    function createRecordItemCard(rec, showDate = false) {
+      const isExp = rec.type === 'expense';
+      const card = document.createElement('div');
+      card.className = 'flex items-center justify-between p-3 rounded-2xl bg-white border border-slate-200/80 shadow-xs text-xs';
+
+      card.innerHTML = `
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isExp ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}">
+            <i class="fa-solid ${getCategoryIcon(rec.category)} text-sm"></i>
+          </div>
+          <div>
+            <div class="flex items-center gap-1.5 font-bold text-slate-800">
+              <span>${escapeHtml(rec.category)}</span>
+              ${rec.isShared ? 
+                '<span class="px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-700 text-[9px] font-bold">共有</span>' : 
+                '<span class="px-1.5 py-0.2 rounded bg-slate-100 text-slate-500 text-[9px]">個人</span>'
+              }
+            </div>
+            <p class="text-[11px] text-slate-400 truncate max-w-[150px] sm:max-w-xs mt-0.5">
+              ${showDate ? escapeHtml(rec.date) + ' ・ ' : ''}${escapeHtml(rec.payer || '未指定')}${rec.memo ? ' (' + escapeHtml(rec.memo) + ')' : ''}
+            </p>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="font-extrabold text-sm ${isExp ? 'text-rose-600' : 'text-emerald-600'}">
+            ${isExp ? '-' : '+'}¥${Number(rec.amount).toLocaleString()}
+          </span>
+          <div class="flex items-center">
+            <button class="btn-edit-rec p-1.5 text-slate-400 active:text-brand-600">
+              <i class="fa-solid fa-pen text-xs"></i>
+            </button>
+            <button class="btn-delete-rec p-1.5 text-slate-400 active:text-rose-600">
+              <i class="fa-solid fa-trash text-xs"></i>
+            </button>
+          </div>
+        </div>
+      `;
+
+      card.querySelector('.btn-edit-rec').addEventListener('click', () => openRecordSheetForEdit(rec));
+      card.querySelector('.btn-delete-rec').addEventListener('click', () => confirmDeleteRecord(rec.id));
+      return card;
     }
 
     function renderSettlement() {
       const currentMonthStr = formatYearMonth(state.currentCalendarDate);
       const sharedExpenses = state.records.filter(r => 
-        r.isShared && 
-        r.type === 'expense' && 
-        r.date.startsWith(currentMonthStr)
+        r.isShared && r.type === 'expense' && r.date.startsWith(currentMonthStr)
       );
 
       const payerTotals = {};
-      let totalSharedAmount = 0;
+      let totalShared = 0;
 
       sharedExpenses.forEach(r => {
-        const payer = (r.payer || '未指定').trim();
+        const p = (r.payer || '未指定').trim();
         const amt = Number(r.amount);
-        payerTotals[payer] = (payerTotals[payer] || 0) + amt;
-        totalSharedAmount += amt;
+        payerTotals[p] = (payerTotals[p] || 0) + amt;
+        totalShared += amt;
       });
 
       const members = Object.keys(payerTotals);
@@ -1381,72 +1083,56 @@
       cardsGrid.innerHTML = '';
 
       if (members.length === 0) {
-        instructionEl.innerHTML = '<span class="text-slate-500 text-sm">今月の共有支出はまだありません</span>';
-        cardsGrid.innerHTML = `
-          <div class="col-span-full text-center py-10 text-slate-400 bg-white rounded-2xl border border-slate-200">
-            <i class="fa-solid fa-receipt text-3xl mb-2 text-slate-300"></i>
-            <p class="text-xs">「共有する」にチェックを入れて支出を登録すると、ここに清算額が自動表示されます</p>
-          </div>
-        `;
+        instructionEl.innerHTML = '<span class="text-slate-500 font-normal">今月の共有支出はまだありません</span>';
         renderSharedCategoryBreakdown(sharedExpenses);
         return;
       }
 
       if (members.length === 1) {
-        const loneMember = members[0];
-        instructionEl.innerHTML = `<span class="text-slate-700">${escapeHtml(loneMember)} さんが全額 (¥${totalSharedAmount.toLocaleString()}) を支払っています。</span>`;
+        instructionEl.innerHTML = `<span>${escapeHtml(members[0])} さんが全額 (¥${totalShared.toLocaleString()}) を支払っています。</span>`;
       } else if (members.length === 2) {
-        const p1 = members[0];
-        const p2 = members[1];
-        const a1 = payerTotals[p1];
-        const a2 = payerTotals[p2];
+        const [p1, p2] = members;
+        const [a1, a2] = [payerTotals[p1], payerTotals[p2]];
 
         if (a1 > a2) {
           const diff = Math.round((a1 - a2) / 2);
           instructionEl.innerHTML = `
-            <span class="text-rose-600 font-extrabold">${escapeHtml(p2)}</span> さんから 
-            <span class="text-brand-600 font-extrabold">${escapeHtml(p1)}</span> さんへ 
-            <span class="text-emerald-600 text-xl font-extrabold underline">¥${diff.toLocaleString()}</span> を送金すると折半完了！
+            <span class="text-rose-600 font-extrabold">${escapeHtml(p2)}</span> から 
+            <span class="text-brand-600 font-extrabold">${escapeHtml(p1)}</span> へ 
+            <span class="text-emerald-600 text-base font-extrabold underline">¥${diff.toLocaleString()}</span> 送金で折半完了！
           `;
         } else if (a2 > a1) {
           const diff = Math.round((a2 - a1) / 2);
           instructionEl.innerHTML = `
-            <span class="text-rose-600 font-extrabold">${escapeHtml(p1)}</span> さんから 
-            <span class="text-brand-600 font-extrabold">${escapeHtml(p2)}</span> さんへ 
-            <span class="text-emerald-600 text-xl font-extrabold underline">¥${diff.toLocaleString()}</span> を送金すると折半完了！
+            <span class="text-rose-600 font-extrabold">${escapeHtml(p1)}</span> から 
+            <span class="text-brand-600 font-extrabold">${escapeHtml(p2)}</span> へ 
+            <span class="text-emerald-600 text-base font-extrabold underline">¥${diff.toLocaleString()}</span> 送金で折半完了！
           `;
         } else {
-          instructionEl.innerHTML = '<span class="text-emerald-700 font-bold">2人の支払額はピッタリ同額です！送金の必要はありません 🎉</span>';
+          instructionEl.innerHTML = '<span class="text-emerald-700 font-bold">2人の支払額は同額です！送金の必要はありません 🎉</span>';
         }
       } else {
-        const avgShare = Math.round(totalSharedAmount / members.length);
-        instructionEl.innerHTML = `1人あたりの目標負担額: <span class="text-brand-600 font-extrabold">¥${avgShare.toLocaleString()}</span> (合計 ¥${totalSharedAmount.toLocaleString()})`;
+        const avg = Math.round(totalShared / members.length);
+        instructionEl.innerHTML = `1人あたり目標: <span class="text-brand-600 font-extrabold">¥${avg.toLocaleString()}</span> (合計 ¥${totalShared.toLocaleString()})`;
       }
 
-      const avg = Math.round(totalSharedAmount / (members.length || 1));
+      const avg = Math.round(totalShared / (members.length || 1));
       members.forEach(m => {
         const paid = payerTotals[m];
         const diff = paid - avg;
         const card = document.createElement('div');
-        card.className = 'bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex items-center justify-between';
-
+        card.className = 'bg-white rounded-2xl p-3.5 shadow-xs border border-slate-200 flex items-center justify-between text-xs';
         card.innerHTML = `
-          <div class="flex items-center gap-3">
-            <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-brand-500 to-indigo-400 text-white font-bold text-base flex items-center justify-center shadow-sm">
-              ${escapeHtml(m.substring(0, 1))}
-            </div>
-            <div>
-              <h4 class="font-bold text-slate-800 text-sm">${escapeHtml(m)}</h4>
-              <p class="text-xs text-slate-400">立替支払合計: <span class="font-bold text-slate-700">¥${paid.toLocaleString()}</span></p>
-            </div>
+          <div>
+            <h4 class="font-bold text-slate-800 text-sm">${escapeHtml(m)}</h4>
+            <p class="text-[11px] text-slate-400 mt-0.5">支払合計: <span class="font-bold text-slate-700">¥${paid.toLocaleString()}</span></p>
           </div>
           <div class="text-right">
-            <span class="text-[10px] font-bold text-slate-400 uppercase block">差額 (折半基準)</span>
-            <span class="font-extrabold text-sm ${diff >= 0 ? 'text-emerald-600' : 'text-rose-600'}">
+            <span class="font-black text-sm ${diff >= 0 ? 'text-emerald-600' : 'text-rose-600'}">
               ${diff >= 0 ? '+' : ''}¥${diff.toLocaleString()}
             </span>
-            <span class="text-[10px] block ${diff >= 0 ? 'text-emerald-500' : 'text-rose-500'}">
-              ${diff >= 0 ? '(受け取る側)' : '(払う側)'}
+            <span class="text-[10px] block ${diff >= 0 ? 'text-emerald-500 font-bold' : 'text-rose-500 font-bold'}">
+              ${diff >= 0 ? '受取' : '支払'}
             </span>
           </div>
         `;
@@ -1459,26 +1145,24 @@
     function renderSharedCategoryBreakdown(sharedExpenses) {
       const container = document.getElementById('sharedCategoryBreakdown');
       container.innerHTML = '';
-
       if (sharedExpenses.length === 0) {
-        container.innerHTML = '<p class="col-span-full text-slate-400 text-center py-4">データがありません</p>';
+        container.innerHTML = '<p class="col-span-full text-slate-400 text-center py-2">明細なし</p>';
         return;
       }
-
       const catTotals = {};
       sharedExpenses.forEach(r => {
         catTotals[r.category] = (catTotals[r.category] || 0) + Number(r.amount);
       });
 
-      Object.entries(catTotals).forEach(([cat, amount]) => {
+      Object.entries(catTotals).forEach(([cat, amt]) => {
         const item = document.createElement('div');
-        item.className = 'p-3 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between';
+        item.className = 'p-2.5 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between';
         item.innerHTML = `
-          <div class="flex items-center gap-2">
-            <i class="fa-solid ${getCategoryIcon(cat)} text-slate-500"></i>
-            <span class="font-medium text-slate-700">${escapeHtml(cat)}</span>
+          <div class="flex items-center gap-1.5 truncate">
+            <i class="fa-solid ${getCategoryIcon(cat)} text-slate-400 text-xs"></i>
+            <span class="font-medium text-slate-700 truncate">${escapeHtml(cat)}</span>
           </div>
-          <span class="font-bold text-slate-800">¥${amount.toLocaleString()}</span>
+          <span class="font-extrabold text-slate-800 shrink-0">¥${amt.toLocaleString()}</span>
         `;
         container.appendChild(item);
       });
@@ -1487,9 +1171,7 @@
     function renderAnalytics() {
       const monthSelect = document.getElementById('analyticsMonthSelect');
       const uniqueMonths = [...new Set(state.records.map(r => formatYearMonth(new Date(r.date))))];
-      if (!uniqueMonths.includes(state.analyticsMonth)) {
-        uniqueMonths.unshift(state.analyticsMonth);
-      }
+      if (!uniqueMonths.includes(state.analyticsMonth)) uniqueMonths.unshift(state.analyticsMonth);
       uniqueMonths.sort((a, b) => b.localeCompare(a));
 
       monthSelect.innerHTML = uniqueMonths.map(m => `<option value="${m}" ${m === state.analyticsMonth ? 'selected' : ''}>${m}</option>`).join('');
@@ -1502,9 +1184,7 @@
 
       const expenseRecords = targetRecords.filter(r => r.type === 'expense');
       const catSums = {};
-      expenseRecords.forEach(r => {
-        catSums[r.category] = (catSums[r.category] || 0) + Number(r.amount);
-      });
+      expenseRecords.forEach(r => { catSums[r.category] = (catSums[r.category] || 0) + Number(r.amount); });
 
       const pieCanvas = document.getElementById('categoryPieChart');
       const pieNotice = document.getElementById('pieEmptyNotice');
@@ -1523,19 +1203,12 @@
           type: 'doughnut',
           data: {
             labels: labels,
-            datasets: [{
-              data: data,
-              backgroundColor: bgColors.slice(0, labels.length),
-              borderWidth: 2,
-              borderColor: '#ffffff'
-            }]
+            datasets: [{ data, backgroundColor: bgColors.slice(0, labels.length), borderWidth: 2 }]
           },
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: {
-              legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } }
-            }
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 9 } } } }
           }
         });
       }
@@ -1554,68 +1227,183 @@
         if (state.charts.bar) state.charts.bar.destroy();
       } else {
         barNotice.classList.add('hidden');
-        const mLabels = Object.keys(memberSums);
-        const mData = Object.values(memberSums);
-
         if (state.charts.bar) state.charts.bar.destroy();
         state.charts.bar = new Chart(barCanvas, {
           type: 'bar',
           data: {
-            labels: mLabels,
-            datasets: [{
-              label: '支出額 (円)',
-              data: mData,
-              backgroundColor: '#4f46e5',
-              borderRadius: 8
-            }]
+            labels: Object.keys(memberSums),
+            datasets: [{ label: '支出額', data: Object.values(memberSums), backgroundColor: '#4f46e5', borderRadius: 6 }]
           },
           options: {
             responsive: true,
             maintainAspectRatio: false,
             plugins: { legend: { display: false } },
-            scales: {
-              y: {
-                beginAtZero: true,
-                ticks: { callback: (val) => '¥' + val.toLocaleString() }
-              }
-            }
+            scales: { y: { beginAtZero: true, ticks: { callback: v => '¥' + v.toLocaleString() } } }
           }
         });
       }
     }
 
     /* ========================================================
-       6. レシートAI読み取り機能
+       6. スマホ最適化ボトムシート操作
     ======================================================== */
-    let lastReceiptParsedData = null;
+    function openRecordSheetForNew(targetDate = null) {
+      document.getElementById('recordModalTitle').innerHTML = '<i class="fa-solid fa-plus text-brand-600"></i> 家計簿をつける';
+      document.getElementById('editRecordId').value = '';
+      const d = targetDate || state.selectedCalendarDay || formatDateYMD(new Date());
+      setDateInputValue(d);
+
+      document.getElementById('formAmount').value = '';
+      document.getElementById('formPayer').value = state.userName;
+      document.getElementById('formMemo').value = '';
+      document.getElementById('formIsShared').checked = true;
+
+      setRecordType('expense');
+      selectCategory('食費');
+
+      showBottomSheet();
+      // スマホの数字キーボードに即フォーカス
+      setTimeout(() => {
+        document.getElementById('formAmount').focus();
+      }, 150);
+    }
+
+    function openRecordSheetForEdit(rec) {
+      document.getElementById('recordModalTitle').innerHTML = '<i class="fa-solid fa-pen text-brand-600"></i> 明細の編集';
+      document.getElementById('editRecordId').value = rec.id;
+      setDateInputValue(rec.date);
+      document.getElementById('formAmount').value = rec.amount;
+      document.getElementById('formPayer').value = rec.payer || '';
+      document.getElementById('formMemo').value = rec.memo || '';
+      document.getElementById('formIsShared').checked = !!rec.isShared;
+
+      setRecordType(rec.type || 'expense');
+      selectCategory(rec.category);
+
+      showBottomSheet();
+    }
+
+    function showBottomSheet() {
+      const backdrop = document.getElementById('recordSheetBackdrop');
+      const sheet = document.getElementById('recordSheet');
+      backdrop.classList.remove('hidden');
+      sheet.classList.add('sheet-enter');
+      requestAnimationFrame(() => {
+        sheet.classList.remove('sheet-enter');
+        sheet.classList.add('sheet-enter-active');
+      });
+    }
+
+    function closeRecordSheet() {
+      const sheet = document.getElementById('recordSheet');
+      sheet.classList.add('sheet-exit-active');
+      setTimeout(() => {
+        document.getElementById('recordSheetBackdrop').classList.add('hidden');
+        sheet.classList.remove('sheet-enter-active', 'sheet-exit-active');
+      }, 200);
+    }
+
+    function setDateInputValue(dateStr) {
+      document.getElementById('formDate').value = dateStr;
+      const today = formatDateYMD(new Date());
+      const yesterday = formatDateYMD(new Date(Date.now() - 86400000));
+      const beforeYesterday = formatDateYMD(new Date(Date.now() - 86400000 * 2));
+
+      const btns = {
+        today: document.getElementById('btnDateToday'),
+        yesterday: document.getElementById('btnDateYesterday'),
+        beforeYesterday: document.getElementById('btnDateBeforeYesterday'),
+        custom: document.getElementById('btnDateCustom')
+      };
+
+      Object.values(btns).forEach(b => {
+        b.className = 'py-1.5 rounded-xl bg-slate-100 text-slate-700 font-medium active:bg-slate-200';
+      });
+
+      if (dateStr === today) {
+        btns.today.className = 'py-1.5 rounded-xl bg-brand-50 text-brand-700 border border-brand-200 font-bold';
+      } else if (dateStr === yesterday) {
+        btns.yesterday.className = 'py-1.5 rounded-xl bg-brand-50 text-brand-700 border border-brand-200 font-bold';
+      } else if (dateStr === beforeYesterday) {
+        btns.beforeYesterday.className = 'py-1.5 rounded-xl bg-brand-50 text-brand-700 border border-brand-200 font-bold';
+      } else {
+        btns.custom.className = 'py-1.5 rounded-xl bg-brand-50 text-brand-700 border border-brand-200 font-bold';
+      }
+    }
+
+    function setRecordType(type) {
+      state.currentRecordType = type;
+      const btnExp = document.getElementById('btnTypeExpense');
+      const btnInc = document.getElementById('btnTypeIncome');
+
+      if (type === 'expense') {
+        btnExp.className = 'py-2.5 rounded-xl font-bold text-xs border-2 border-rose-500 bg-rose-50 text-rose-600 flex items-center justify-center gap-1.5 active:scale-98 transition';
+        btnInc.className = 'py-2.5 rounded-xl font-bold text-xs border-2 border-slate-200 text-slate-400 hover:border-emerald-300 flex items-center justify-center gap-1.5 active:scale-98 transition';
+        renderCategoryButtons(EXPENSE_CATEGORIES);
+        selectCategory('食費');
+      } else {
+        btnInc.className = 'py-2.5 rounded-xl font-bold text-xs border-2 border-emerald-500 bg-emerald-50 text-emerald-600 flex items-center justify-center gap-1.5 active:scale-98 transition';
+        btnExp.className = 'py-2.5 rounded-xl font-bold text-xs border-2 border-slate-200 text-slate-400 hover:border-rose-300 flex items-center justify-center gap-1.5 active:scale-98 transition';
+        renderCategoryButtons(INCOME_CATEGORIES);
+        selectCategory('給料');
+      }
+    }
+
+    function renderCategoryButtons(categories) {
+      const container = document.getElementById('categoryContainer');
+      container.innerHTML = '';
+      categories.forEach(cat => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = `cat-btn p-2 rounded-xl border border-slate-200 flex flex-col items-center justify-center gap-1 text-[11px] font-medium text-slate-700 active:scale-95 transition bg-white`;
+        btn.dataset.category = cat.name;
+        btn.innerHTML = `<i class="fa-solid ${cat.icon} text-sm ${cat.color.split(' ')[0]}"></i><span class="truncate max-w-full">${cat.name}</span>`;
+        btn.addEventListener('click', () => selectCategory(cat.name));
+        container.appendChild(btn);
+      });
+    }
+
+    function selectCategory(catName) {
+      state.selectedCategory = catName;
+      document.getElementById('formCategory').value = catName;
+      document.querySelectorAll('.cat-btn').forEach(btn => {
+        if (btn.dataset.category === catName) {
+          btn.className = 'cat-btn p-2 rounded-xl border-2 border-brand-500 bg-brand-50 flex flex-col items-center justify-center gap-1 text-[11px] font-bold text-brand-700';
+        } else {
+          btn.className = 'cat-btn p-2 rounded-xl border border-slate-200 flex flex-col items-center justify-center gap-1 text-[11px] font-medium text-slate-600 bg-white';
+        }
+      });
+    }
+
+    let pendingDeleteId = null;
+    function confirmDeleteRecord(id) {
+      pendingDeleteId = id;
+      document.getElementById('confirmDialog').classList.remove('hidden');
+    }
+
+    /* ========================================================
+       7. AIレシート解析 (Gemini 3 Flash)
+    ======================================================== */
+    let lastParsedReceipt = null;
 
     async function handleReceiptUpload(file) {
       if (!file) return;
-
-      const loadingEl = document.getElementById('receiptLoading');
-      const resultCard = document.getElementById('receiptResultCard');
-      loadingEl.classList.remove('hidden');
-      resultCard.classList.add('hidden');
+      const loading = document.getElementById('receiptLoading');
+      const card = document.getElementById('receiptResultCard');
+      loading.classList.remove('hidden');
+      card.classList.add('hidden');
 
       try {
         const base64Data = await fileToBase64(file);
         const mimeType = file.type || 'image/jpeg';
 
-        const promptText = `
-このレシート画像を読み取り、以下の情報を正確にJSONで抽出してください。
-- 合計金額(totalAmount: number)
-- 日付(date: YYYY-MM-DD形式、見当たらなければ今日の日付 "${formatDateYMD(new Date())}")
-- 店舗名(store: string)
-- 推奨カテゴリ(category: 食費, 日用品, 交際費, 衣服美容, 医療健康, 雑費・他 の中から最も適切なものを選択)
-- 内容メモ(memo: string)
-- 品目内訳(items: [{name: string, price: number}])
-        `;
+        const prompt = `このレシート画像を読み取り、合計金額(totalAmount: number)、日付(date: YYYY-MM-DD形式、なければ今日)、店舗名(store: string)、推奨カテゴリ(category: 食費,日用品,外食・カフェ,雑費・他から選択)、品目(items: [{name, price}])をJSONで出力してください。`;
 
         const payload = {
           contents: [{
             role: "user",
             parts: [
-              { text: promptText },
+              { text: prompt },
               { inlineData: { mimeType: mimeType, data: base64Data } }
             ]
           }],
@@ -1628,15 +1416,11 @@
                 date: { type: "STRING" },
                 totalAmount: { type: "NUMBER" },
                 category: { type: "STRING" },
-                memo: { type: "STRING" },
                 items: {
                   type: "ARRAY",
                   items: {
                     type: "OBJECT",
-                    properties: {
-                      name: { type: "STRING" },
-                      price: { type: "NUMBER" }
-                    }
+                    properties: { name: { type: "STRING" }, price: { type: "NUMBER" } }
                   }
                 }
               },
@@ -1645,7 +1429,7 @@
           }
         };
 
-        const apiKey = ""; 
+        const apiKey = "";
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
 
         let response = null;
@@ -1657,180 +1441,75 @@
               body: JSON.stringify(payload)
             });
             if (response.ok) break;
-          } catch (e) {
+          } catch(e) {
             if (attempt === 2) throw e;
             await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
           }
         }
 
-        const result = await response.json();
-        const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!jsonText) throw new Error('AIの解析結果を取得できませんでした');
+        const resJson = await response.json();
+        const text = resJson?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!text) throw new Error('解析結果なし');
 
-        const parsed = JSON.parse(jsonText);
-        lastReceiptParsedData = parsed;
+        const parsed = JSON.parse(text);
+        lastParsedReceipt = parsed;
 
-        document.getElementById('detectedStoreBadge').textContent = parsed.store || '店舗名不明';
+        document.getElementById('detectedStoreBadge').textContent = parsed.store || '店舗';
         document.getElementById('resDate').textContent = parsed.date || formatDateYMD(new Date());
         document.getElementById('resAmount').textContent = `¥${Number(parsed.totalAmount || 0).toLocaleString()}`;
-        document.getElementById('resCategory').textContent = parsed.category || '食費';
 
         const itemsList = document.getElementById('resItemsList');
         itemsList.innerHTML = '';
         if (parsed.items && parsed.items.length > 0) {
           parsed.items.forEach(it => {
             const li = document.createElement('li');
-            li.className = 'flex justify-between text-slate-700';
-            li.innerHTML = `<span>${escapeHtml(it.name)}</span><span class="font-mono">¥${Number(it.price).toLocaleString()}</span>`;
+            li.className = 'flex justify-between text-slate-600';
+            li.innerHTML = `<span>${escapeHtml(it.name)}</span><span>¥${Number(it.price).toLocaleString()}</span>`;
             itemsList.appendChild(li);
           });
-        } else {
-          itemsList.innerHTML = '<li class="text-slate-400">品目内訳は検出されませんでした</li>';
         }
 
-        resultCard.classList.remove('hidden');
-        showToast('レシートの読み取りに成功しました！', 'success');
+        card.classList.remove('hidden');
+        showToast('レシートを読み取りました！', 'success');
 
       } catch (err) {
-        console.error('Receipt AI Error:', err);
-        showToast('レシートの解析に失敗しました。', 'error');
+        console.error(err);
+        showToast('読み取りに失敗しました', 'error');
       } finally {
-        loadingEl.classList.add('hidden');
+        loading.classList.add('hidden');
       }
-    }
-
-    function applyReceiptToInputModal() {
-      if (!lastReceiptParsedData) return;
-      openRecordModalForNew();
-      document.getElementById('formDate').value = lastReceiptParsedData.date || formatDateYMD(new Date());
-      document.getElementById('formAmount').value = lastReceiptParsedData.totalAmount || '';
-      selectCategory(lastReceiptParsedData.category || '食費');
-
-      let memo = lastReceiptParsedData.store ? `${lastReceiptParsedData.store} ` : '';
-      if (lastReceiptParsedData.items && lastReceiptParsedData.items.length > 0) {
-        memo += `(${lastReceiptParsedData.items.map(i => i.name).slice(0, 3).join(', ')}等)`;
-      }
-      document.getElementById('formMemo').value = memo;
-      showToast('レシートの内容をフォームに反映しました', 'info');
     }
 
     /* ========================================================
-       7. モーダル操作・フォーム
-    ======================================================== */
-    function openRecordModalForNew(targetDate = null) {
-      document.getElementById('recordModalTitle').innerHTML = '<i class="fa-solid fa-plus text-brand-600"></i> 家計簿の新規入力';
-      document.getElementById('editRecordId').value = '';
-      document.getElementById('formDate').value = targetDate || state.selectedCalendarDay || formatDateYMD(new Date());
-      document.getElementById('formAmount').value = '';
-      document.getElementById('formPayer').value = state.userName;
-      document.getElementById('formMemo').value = '';
-      document.getElementById('formIsShared').checked = true;
-
-      setRecordType('expense');
-      selectCategory('食費');
-      document.getElementById('recordModal').classList.remove('hidden');
-    }
-
-    function openRecordModalForEdit(record) {
-      document.getElementById('recordModalTitle').innerHTML = '<i class="fa-solid fa-pen text-brand-600"></i> 家計簿の編集';
-      document.getElementById('editRecordId').value = record.id;
-      document.getElementById('formDate').value = record.date;
-      document.getElementById('formAmount').value = record.amount;
-      document.getElementById('formPayer').value = record.payer || '';
-      document.getElementById('formMemo').value = record.memo || '';
-      document.getElementById('formIsShared').checked = !!record.isShared;
-
-      setRecordType(record.type || 'expense');
-      selectCategory(record.category);
-      document.getElementById('recordModal').classList.remove('hidden');
-    }
-
-    function closeRecordModal() {
-      document.getElementById('recordModal').classList.add('hidden');
-    }
-
-    function setRecordType(type) {
-      state.currentRecordType = type;
-      const btnExp = document.getElementById('btnTypeExpense');
-      const btnInc = document.getElementById('btnTypeIncome');
-
-      if (type === 'expense') {
-        btnExp.className = 'type-selector-btn py-2.5 rounded-xl font-bold text-sm border-2 border-rose-500 bg-rose-50 text-rose-600 flex items-center justify-center gap-2 transition';
-        btnInc.className = 'type-selector-btn py-2.5 rounded-xl font-bold text-sm border-2 border-slate-200 text-slate-500 hover:border-emerald-300 flex items-center justify-center gap-2 transition';
-        renderCategoryButtons(EXPENSE_CATEGORIES);
-        selectCategory('食費');
-      } else {
-        btnInc.className = 'type-selector-btn py-2.5 rounded-xl font-bold text-sm border-2 border-emerald-500 bg-emerald-50 text-emerald-600 flex items-center justify-center gap-2 transition';
-        btnExp.className = 'type-selector-btn py-2.5 rounded-xl font-bold text-sm border-2 border-slate-200 text-slate-500 hover:border-rose-300 flex items-center justify-center gap-2 transition';
-        renderCategoryButtons(INCOME_CATEGORIES);
-        selectCategory('給料');
-      }
-    }
-
-    function renderCategoryButtons(categories) {
-      const container = document.getElementById('categoryContainer');
-      container.innerHTML = '';
-
-      categories.forEach(cat => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = `cat-btn p-2 rounded-xl border border-slate-200 hover:border-brand-400 flex flex-col items-center justify-center gap-1 transition ${cat.name === state.selectedCategory ? 'ring-2 ring-brand-500 bg-brand-50/50' : 'bg-white'}`;
-        btn.dataset.category = cat.name;
-
-        btn.innerHTML = `
-          <i class="fa-solid ${cat.icon} text-sm ${cat.color.split(' ')[1]}"></i>
-          <span class="font-medium text-slate-700">${cat.name}</span>
-        `;
-
-        btn.addEventListener('click', () => selectCategory(cat.name));
-        container.appendChild(btn);
-      });
-    }
-
-    function selectCategory(catName) {
-      state.selectedCategory = catName;
-      document.getElementById('formCategory').value = catName;
-
-      document.querySelectorAll('.cat-btn').forEach(btn => {
-        if (btn.dataset.category === catName) {
-          btn.className = 'cat-btn p-2 rounded-xl border-2 border-brand-500 bg-brand-50 flex flex-col items-center justify-center gap-1 font-bold';
-        } else {
-          btn.className = 'cat-btn p-2 rounded-xl border border-slate-200 hover:border-brand-400 bg-white flex flex-col items-center justify-center gap-1 font-medium text-slate-600';
-        }
-      });
-    }
-
-    let pendingDeleteId = null;
-    function confirmDeleteRecord(id) {
-      pendingDeleteId = id;
-      document.getElementById('confirmDialog').classList.remove('hidden');
-    }
-
-    /* ========================================================
-       8. イベントリスナー登録
+       8. イベント設定
     ======================================================== */
     function setupEventListeners() {
-      // タブ切り替え
+      // 下部ボトムナビゲーション切り替え
       document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           const tabId = btn.dataset.tab;
           state.activeTab = tabId;
 
           document.querySelectorAll('.tab-btn').forEach(b => {
-            b.classList.remove('active', 'border-brand-600', 'text-brand-600', 'font-semibold');
-            b.classList.add('text-slate-500', 'font-medium', 'border-transparent');
+            b.classList.remove('active', 'text-brand-600', 'font-bold');
+            b.classList.add('text-slate-400', 'font-medium');
           });
-          btn.classList.add('active', 'border-brand-600', 'text-brand-600', 'font-semibold');
-          btn.classList.remove('text-slate-500', 'border-transparent');
+          btn.classList.add('active', 'text-brand-600', 'font-bold');
+          btn.classList.remove('text-slate-400');
 
           document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
           document.getElementById(`tab-${tabId}`).classList.remove('hidden');
 
           if (tabId === 'settlement') renderSettlement();
           if (tabId === 'analytics') renderAnalytics();
-          if (tabId === 'records') renderRecordsTable();
+          if (tabId === 'records') renderRecordsCardList();
         });
       });
+
+      // 追加ボタン群
+      document.getElementById('btnBottomAdd').addEventListener('click', () => openRecordSheetForNew());
+      document.getElementById('btnAddRecordForDate').addEventListener('click', () => openRecordSheetForNew(state.selectedCalendarDay));
+      document.getElementById('btnCloseRecordSheet').addEventListener('click', closeRecordSheet);
 
       // カレンダー月送り
       document.getElementById('calPrevMonth').addEventListener('click', () => {
@@ -1848,19 +1527,39 @@
         renderSelectedDayRecords();
       });
 
-      // 新規入力ボタン
-      document.getElementById('btnFloatingAdd').addEventListener('click', () => openRecordModalForNew());
-      document.getElementById('btnAddRecordForDate').addEventListener('click', () => openRecordModalForNew(state.selectedCalendarDay));
-      document.getElementById('btnQuickAddFromList').addEventListener('click', () => openRecordModalForNew());
-
-      document.getElementById('btnCloseRecordModal').addEventListener('click', closeRecordModal);
-      document.getElementById('btnCancelRecordModal').addEventListener('click', closeRecordModal);
-
+      // 収支ボタン
       document.getElementById('btnTypeExpense').addEventListener('click', () => setRecordType('expense'));
       document.getElementById('btnTypeIncome').addEventListener('click', () => setRecordType('income'));
 
-      // 家計簿保存
-      document.getElementById('recordForm').addEventListener('submit', async (e) => {
+      // 金額クイックボタン
+      document.querySelectorAll('.quick-amt-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const amtInput = document.getElementById('formAmount');
+          const addVal = Number(btn.dataset.val);
+          const current = Number(amtInput.value || 0);
+          amtInput.value = current + addVal;
+        });
+      });
+      document.getElementById('btnClearAmt').addEventListener('click', () => {
+        document.getElementById('formAmount').value = '';
+      });
+
+      // 日付クイック選択
+      document.getElementById('btnDateToday').addEventListener('click', () => {
+        setDateInputValue(formatDateYMD(new Date()));
+      });
+      document.getElementById('btnDateYesterday').addEventListener('click', () => {
+        setDateInputValue(formatDateYMD(new Date(Date.now() - 86400000)));
+      });
+      document.getElementById('btnDateBeforeYesterday').addEventListener('click', () => {
+        setDateInputValue(formatDateYMD(new Date(Date.now() - 86400000 * 2)));
+      });
+      document.getElementById('formDate').addEventListener('change', (e) => {
+        setDateInputValue(e.target.value);
+      });
+
+      // 保存
+      document.getElementById('recordForm').addEventListener('submit', (e) => {
         e.preventDefault();
         const id = document.getElementById('editRecordId').value || null;
         const amount = Number(document.getElementById('formAmount').value);
@@ -1871,66 +1570,45 @@
         const memo = document.getElementById('formMemo').value.trim();
 
         if (isNaN(amount) || amount <= 0) {
-          showToast('有効な金額を入力してください', 'error');
+          showToast('金額を入力してください', 'error');
           return;
         }
 
-        const recordData = {
-          id,
-          type: state.currentRecordType,
-          amount,
-          date,
-          category,
-          isShared,
-          payer,
-          memo
-        };
-
-        try {
-          await saveRecord(recordData);
-          closeRecordModal();
-          showToast(id ? '明細を更新しました' : '家計簿に記録しました！', 'success');
-        } catch (err) {
-          console.error('Save error:', err);
-          showToast('保存中にエラーが発生しました', 'error');
-        }
+        saveRecord({ id, type: state.currentRecordType, amount, date, category, isShared, payer, memo });
+        closeRecordSheet();
+        showToast(id ? '明細を更新しました' : '記録しました！', 'success');
       });
 
-      // 削除ダイアログ
+      // 削除確認
       document.getElementById('btnCancelConfirm').addEventListener('click', () => {
         pendingDeleteId = null;
         document.getElementById('confirmDialog').classList.add('hidden');
       });
-      document.getElementById('btnProceedConfirm').addEventListener('click', async () => {
+      document.getElementById('btnProceedConfirm').addEventListener('click', () => {
         if (pendingDeleteId) {
-          try {
-            await deleteRecord(pendingDeleteId);
-            showToast('明細を削除しました', 'info');
-          } catch (err) {
-            showToast('削除に失敗しました', 'error');
-          } finally {
-            pendingDeleteId = null;
-            document.getElementById('confirmDialog').classList.add('hidden');
-          }
+          deleteRecord(pendingDeleteId);
+          pendingDeleteId = null;
+          document.getElementById('confirmDialog').classList.add('hidden');
+          showToast('明細を削除しました', 'info');
         }
       });
 
-      // フィルタイベント
-      ['filterType', 'filterSharing', 'filterCategory'].forEach(id => {
-        document.getElementById(id).addEventListener('change', renderRecordsTable);
+      // フィルタ
+      ['filterType', 'filterSharing'].forEach(id => {
+        document.getElementById(id).addEventListener('change', renderRecordsCardList);
       });
 
-      // グラフ設定イベント
+      // グラフ
       document.getElementById('btnGraphScopeShared').addEventListener('click', (e) => {
         state.graphScope = 'shared';
-        e.target.className = 'px-3 py-1.5 rounded-lg font-bold bg-white text-brand-600 shadow-sm transition';
-        document.getElementById('btnGraphScopeAll').className = 'px-3 py-1.5 rounded-lg font-medium text-slate-600 transition';
+        e.target.className = 'px-2.5 py-1 rounded-lg bg-white text-brand-600 shadow-xs font-bold';
+        document.getElementById('btnGraphScopeAll').className = 'px-2.5 py-1 rounded-lg text-slate-600';
         renderAnalytics();
       });
       document.getElementById('btnGraphScopeAll').addEventListener('click', (e) => {
         state.graphScope = 'all';
-        e.target.className = 'px-3 py-1.5 rounded-lg font-bold bg-white text-brand-600 shadow-sm transition';
-        document.getElementById('btnGraphScopeShared').className = 'px-3 py-1.5 rounded-lg font-medium text-slate-600 transition';
+        e.target.className = 'px-2.5 py-1 rounded-lg bg-white text-brand-600 shadow-xs font-bold';
+        document.getElementById('btnGraphScopeShared').className = 'px-2.5 py-1 rounded-lg text-slate-600';
         renderAnalytics();
       });
       document.getElementById('analyticsMonthSelect').addEventListener('change', (e) => {
@@ -1938,7 +1616,7 @@
         renderAnalytics();
       });
 
-      // ルーム管理モーダル
+      // ルーム設定
       document.getElementById('btnRoomSettings').addEventListener('click', () => {
         document.getElementById('inputRoomId').value = state.roomId;
         document.getElementById('roomModal').classList.remove('hidden');
@@ -1946,22 +1624,29 @@
       document.getElementById('btnCloseRoomModal').addEventListener('click', () => {
         document.getElementById('roomModal').classList.add('hidden');
       });
-      document.getElementById('btnCopyRoomLink').addEventListener('click', copyRoomLink);
-      document.getElementById('btnShareQuick').addEventListener('click', copyRoomLink);
+      document.getElementById('btnShareTop').addEventListener('click', copyRoomLink);
+      document.getElementById('btnCopyRoomLinkModal').addEventListener('click', copyRoomLink);
       document.getElementById('btnJoinRoom').addEventListener('click', () => {
-        const target = document.getElementById('inputTargetRoomId').value;
-        if (target && target.trim() !== '') {
-          setRoomId(target);
+        const val = document.getElementById('inputTargetRoomId').value;
+        if (val && val.trim()) {
+          setRoomId(val);
           document.getElementById('roomModal').classList.add('hidden');
         }
       });
       document.getElementById('btnCreateNewRandomRoom').addEventListener('click', () => {
-        const randId = 'ROOM-' + Math.floor(1000 + Math.random() * 9000);
-        setRoomId(randId);
+        setRoomId('ROOM-' + Math.floor(1000 + Math.random() * 9000));
         document.getElementById('roomModal').classList.add('hidden');
       });
 
-      // プロフィールモーダル
+      // 手動同期ボタン
+      document.getElementById('btnForceSync').addEventListener('click', () => {
+        loadCachedRecords();
+        renderAll();
+        sendPresence();
+        showToast('最新データを再取得しました', 'info');
+      });
+
+      // プロフィール
       document.getElementById('btnUserProfile').addEventListener('click', () => {
         document.getElementById('inputProfileName').value = state.userName;
         document.getElementById('profileModal').classList.remove('hidden');
@@ -1970,26 +1655,37 @@
         document.getElementById('profileModal').classList.add('hidden');
       });
       document.getElementById('btnSaveProfile').addEventListener('click', () => {
-        const newName = document.getElementById('inputProfileName').value.trim();
-        if (newName) {
-          state.userName = newName;
-          safeStorage.setItem('pairbook_username', newName);
-          document.getElementById('userNameDisplay').textContent = newName;
-          document.getElementById('userAvatar').textContent = newName.substring(0, 1);
+        const name = document.getElementById('inputProfileName').value.trim();
+        if (name) {
+          state.userName = name;
+          safeStorage.setItem('pb_uname', name);
+          document.getElementById('userNameDisplay').textContent = name;
+          document.getElementById('userAvatar').textContent = name.substring(0, 1);
           document.getElementById('profileModal').classList.add('hidden');
           sendPresence();
-          showToast(`名前を「${newName}」に設定しました`, 'success');
+          showToast(`名前を「${name}」に設定しました`, 'success');
         }
       });
 
-      // レシート
-      const fileInput = document.getElementById('receiptFileInput');
-      fileInput.addEventListener('change', (e) => {
+      // レシート写真読み取り
+      const receiptInput = document.getElementById('receiptFileInput');
+      receiptInput.addEventListener('change', (e) => {
         if (e.target.files && e.target.files[0]) {
           handleReceiptUpload(e.target.files[0]);
         }
       });
-      document.getElementById('btnApplyReceiptToForm').addEventListener('click', applyReceiptToInputModal);
+      document.getElementById('btnApplyReceiptToForm').addEventListener('click', () => {
+        if (!lastParsedReceipt) return;
+        openRecordSheetForNew(lastParsedReceipt.date || formatDateYMD(new Date()));
+        document.getElementById('formAmount').value = lastParsedReceipt.totalAmount || '';
+        selectCategory(lastParsedReceipt.category || '食費');
+        let m = lastParsedReceipt.store ? `${lastParsedReceipt.store} ` : '';
+        if (lastParsedReceipt.items?.length > 0) {
+          m += `(${lastParsedReceipt.items.map(i => i.name).slice(0, 2).join(',')})`;
+        }
+        document.getElementById('formMemo').value = m;
+        showToast('入力フォームに転記しました', 'info');
+      });
     }
 
     /* ========================================================
@@ -2008,31 +1704,16 @@
       return `${year}-${month}`;
     }
 
-    function getCategoryIcon(catName) {
+    function getCategoryIcon(name) {
       const all = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES];
-      const match = all.find(c => c.name === catName);
+      const match = all.find(c => c.name === name);
       return match ? match.icon : 'fa-tag';
-    }
-
-    function populateFilterCategories() {
-      const sel = document.getElementById('filterCategory');
-      const cur = sel.value;
-      const all = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES];
-      let html = '<option value="all">すべてのカテゴリ</option>';
-      all.forEach(c => {
-        html += `<option value="${c.name}" ${c.name === cur ? 'selected' : ''}>${c.name}</option>`;
-      });
-      sel.innerHTML = html;
     }
 
     function fileToBase64(file) {
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result;
-          const base64 = result.split(',')[1];
-          resolve(base64);
-        };
+        reader.onload = () => resolve(reader.result.split(',')[1]);
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
@@ -2040,102 +1721,67 @@
 
     function copyRoomLink() {
       const url = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(state.roomId)}`;
-      const tempInput = document.createElement('input');
-      tempInput.value = url;
-      document.body.appendChild(tempInput);
-      tempInput.select();
+      const temp = document.createElement('input');
+      temp.value = url;
+      document.body.appendChild(temp);
+      temp.select();
       try {
         document.execCommand('copy');
         showToast(`招待リンクをコピーしました！（合言葉: ${state.roomId}）`, 'success');
-      } catch (err) {
-        showToast(`ルーム合言葉: ${state.roomId}`, 'info');
+      } catch (e) {
+        showToast(`部屋の合言葉: ${state.roomId}`, 'info');
       }
-      document.body.removeChild(tempInput);
+      document.body.removeChild(temp);
     }
 
-    function showToast(message, type = 'info') {
+    function showToast(msg, type = 'info') {
       const container = document.getElementById('toastContainer');
       const toast = document.createElement('div');
-
-      const colors = {
-        success: 'bg-emerald-600 text-white',
-        error: 'bg-rose-600 text-white',
-        info: 'bg-slate-800 text-white'
-      };
-
-      const icons = {
-        success: 'fa-circle-check',
-        error: 'fa-circle-exclamation',
-        info: 'fa-circle-info'
-      };
-
-      toast.className = `px-4 py-3 rounded-2xl shadow-xl flex items-center gap-2.5 text-xs font-semibold pointer-events-auto transform transition-all duration-300 translate-y-2 opacity-0 ${colors[type] || colors.info}`;
-      toast.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}"></i> <span>${escapeHtml(message)}</span>`;
-
+      const bg = type === 'success' ? 'bg-emerald-600' : type === 'error' ? 'bg-rose-600' : 'bg-slate-800';
+      toast.className = `px-4 py-2.5 rounded-full text-white text-xs font-bold shadow-lg ${bg} transition-all duration-200 transform translate-y-2 opacity-0 pointer-events-auto`;
+      toast.textContent = msg;
       container.appendChild(toast);
-
-      requestAnimationFrame(() => {
-        toast.classList.remove('translate-y-2', 'opacity-0');
-      });
-
+      requestAnimationFrame(() => toast.classList.remove('translate-y-2', 'opacity-0'));
       setTimeout(() => {
         toast.classList.add('opacity-0', '-translate-y-2');
-        setTimeout(() => toast.remove(), 300);
-      }, 3500);
+        setTimeout(() => toast.remove(), 250);
+      }, 3000);
     }
 
     function escapeHtml(str) {
       if (!str) return '';
-      return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
     }
 
     function setupSampleRecords() {
       const today = new Date();
-      const ymd = formatDateYMD(today);
-      const prevYmd = formatDateYMD(new Date(today.getTime() - 86400000 * 2));
-
       state.records = [
         {
           id: 's1',
           type: 'expense',
-          amount: 5400,
-          date: ymd,
+          amount: 3800,
+          date: formatDateYMD(today),
           category: '食費',
           isShared: true,
           payer: state.userName,
-          memo: '週末スーパー買い出し'
-        },
-        {
-          id: 's2',
-          type: 'expense',
-          amount: 2300,
-          date: prevYmd,
-          category: '日用品',
-          isShared: true,
-          payer: 'パートナー',
-          memo: '洗剤・日用品'
+          memo: '夕食買い出し'
         }
       ];
     }
 
     /* ========================================================
-       10. アプリケーション起動
+       10. 起動処理
     ======================================================== */
-    window.onload = async function() {
+    window.onload = function() {
       document.getElementById('currentRoomDisplay').textContent = state.roomId;
       document.getElementById('inputRoomId').value = state.roomId;
       document.getElementById('userNameDisplay').textContent = state.userName;
       document.getElementById('userAvatar').textContent = state.userName.substring(0, 1);
 
       setupEventListeners();
-      renderOnlineMembers();
-      await initSync();
+      loadCachedRecords();
       renderAll();
+      initGunEngine();
     };
   </script>
 </body>
