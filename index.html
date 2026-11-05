@@ -10,8 +10,8 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <!-- GunDB (サーバー不要で複数ブラウザ・端末間で確実にリアルタイム同期する分散型DB) -->
-  <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+  <!-- MQTT.js (複数ブラウザ・端末間で確実にリアルタイム同期する安定通信エンジン) -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -78,7 +78,7 @@
         </div>
         <div>
           <button id="btnRoomSettings" class="flex items-center gap-1 text-xs font-bold text-slate-800 hover:text-brand-600 transition">
-            <span class="text-slate-500 font-normal">部屋:</span>
+            <span class="text-slate-500 font-normal">部屋ID:</span>
             <span id="currentRoomDisplay" class="bg-brand-50 text-brand-700 px-2 py-0.5 rounded-md border border-brand-100 font-mono">HOME101</span>
             <i class="fa-solid fa-chevron-down text-[10px] text-slate-400"></i>
           </button>
@@ -389,22 +389,22 @@
   <!-- ===============================
        ボトムシート: 家計簿入力フォーム（スマホ最適化）
   =============================== -->
-  <div id="recordSheetBackdrop" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs hidden transition-opacity">
-    <div id="recordSheet" class="absolute bottom-0 left-0 right-0 max-w-lg mx-auto bg-white rounded-t-3xl shadow-2xl max-h-[92vh] flex flex-col overflow-hidden transition-transform duration-200">
+  <div id="recordSheetBackdrop" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs hidden transition-opacity flex flex-col justify-end">
+    <div id="recordSheet" class="w-full max-w-lg mx-auto bg-white rounded-t-3xl shadow-2xl max-h-[88vh] flex flex-col overflow-hidden transition-transform duration-200 relative">
       
-      <!-- シートヘッダー（ドラッグバー付き） -->
-      <div class="px-5 pt-3 pb-2 border-b border-slate-100 flex items-center justify-between shrink-0">
-        <div class="w-12 h-1.5 bg-slate-200 rounded-full mx-auto absolute left-1/2 -translate-x-1/2 top-2"></div>
-        <h3 id="recordModalTitle" class="font-bold text-slate-800 text-sm mt-1 flex items-center gap-1.5">
+      <!-- シートヘッダー（常に上部に固定・バツボタンが絶対に画面外へ飛ばない） -->
+      <div class="sticky top-0 bg-white px-5 pt-3 pb-3 border-b border-slate-100 flex items-center justify-between shrink-0 z-20">
+        <div class="w-10 h-1 bg-slate-200 rounded-full mx-auto absolute left-1/2 -translate-x-1/2 top-1.5"></div>
+        <h3 id="recordModalTitle" class="font-bold text-slate-800 text-sm flex items-center gap-1.5 mt-1">
           <i class="fa-solid fa-pen-to-square text-brand-600"></i> 家計簿をつける
         </h3>
-        <button id="btnCloseRecordSheet" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center text-xs active:bg-slate-200">
+        <button id="btnCloseRecordSheet" type="button" class="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-600 flex items-center justify-center text-base shadow-xs transition shrink-0" aria-label="閉じる">
           <i class="fa-solid fa-xmark"></i>
         </button>
       </div>
 
       <!-- 入力スクロールエリア -->
-      <form id="recordForm" class="p-4 overflow-y-auto space-y-4 flex-1">
+      <form id="recordForm" class="p-4 overflow-y-auto space-y-4 flex-1 overscroll-contain">
         <input type="hidden" id="editRecordId" value="">
 
         <!-- 1. 収支切り替え（大きなタブ） -->
@@ -499,7 +499,7 @@
     <div class="bg-white w-full max-w-sm rounded-3xl shadow-xl p-5 space-y-4">
       <div class="flex items-center justify-between pb-2 border-b border-slate-100">
         <h3 class="font-bold text-slate-800 text-sm flex items-center gap-1.5">
-          <i class="fa-solid fa-door-open text-brand-600"></i> ルーム合言葉の変更
+          <i class="fa-solid fa-door-open text-brand-600"></i> ルームIDの設定
         </h3>
         <button id="btnCloseRoomModal" class="w-7 h-7 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center">
           <i class="fa-solid fa-xmark text-xs"></i>
@@ -508,18 +508,18 @@
 
       <div class="space-y-3 text-xs">
         <div>
-          <label class="block font-bold text-slate-600 mb-1">現在の部屋合言葉</label>
+          <label class="block font-bold text-slate-600 mb-1">現在のルームID（共有キー）</label>
           <div class="flex items-center gap-1.5">
             <input type="text" id="inputRoomId" class="flex-1 px-3 py-2 rounded-xl border border-slate-200 font-mono font-bold text-sm bg-slate-50 uppercase" readonly>
             <button id="btnCopyRoomLinkModal" class="px-3 py-2 rounded-xl bg-brand-600 text-white font-bold shrink-0">
               URLコピー
             </button>
           </div>
-          <p class="text-[10px] text-slate-400 mt-1">相手にこのURLを送るだけで、同じ家計簿を共有できます。</p>
+          <p class="text-[10px] text-slate-400 mt-1">※パスワード等は不要です。このルームID（または共有URL）が一致していれば同じ家計簿につながります。</p>
         </div>
 
         <div class="pt-2 border-t border-slate-100">
-          <label class="block font-bold text-slate-600 mb-1">合言葉を指定して移動</label>
+          <label class="block font-bold text-slate-600 mb-1">別のルームIDへ移動</label>
           <div class="flex items-center gap-1.5">
             <input type="text" id="inputTargetRoomId" placeholder="例: TANAKA2026" class="flex-1 px-3 py-2 rounded-xl border border-slate-200 uppercase font-bold text-xs">
             <button id="btnJoinRoom" class="px-3.5 py-2 rounded-xl bg-slate-800 text-white font-bold">移動</button>
@@ -670,84 +670,122 @@
       document.getElementById('inputRoomId').value = state.roomId;
 
       loadCachedRecords();
-      initGunEngine();
+      initRealtimeEngine();
       showToast(`部屋「${state.roomId}」に切り替えました`, 'info');
     }
 
     /* ========================================================
-       3. GunDB 分散リアルタイム同期エンジン
-       (サーバー不要・GitHub Pages等で確実に別ブラウザ同期)
+       3. 確実なリアルタイム同期エンジン (MQTT over Secure WebSocket)
+       (複数ブラウザ・端末間で確実に即時同期)
     ======================================================== */
-    let gun = null;
-    let roomRef = null;
+    let mqttClient = null;
 
-    function initGunEngine() {
+    function initRealtimeEngine() {
+      if (mqttClient) {
+        try { mqttClient.end(true); } catch(e){}
+      }
+
+      updateSyncBadge('接続中', 'amber');
+
       try {
-        // 世界中の信頼性の高いパブリックリレーサーバーを複数指定
-        const peers = [
-          'https://gun-manhattan.herokuapp.com/gun',
-          'https://relay.peer.ooo/gun',
-          'https://peer.wallarm.com/gun'
-        ];
+        // 無料かつ安定したグローバルWSSブローカー
+        const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
+        const clientId = 'pairbook_' + state.userId + '_' + Math.random().toString(16).substring(2, 8);
 
-        gun = Gun({ peers: peers, localStorage: true });
-        roomRef = gun.get('pairbook_kakeibo_v4').get(state.roomId);
+        mqttClient = mqtt.connect(brokerUrl, {
+          clientId: clientId,
+          clean: true,
+          connectTimeout: 5000,
+          reconnectPeriod: 3000
+        });
 
-        updateSyncBadge('接続中', 'amber');
+        const topicData = `pairbook/v5/${state.roomId}/data`;
+        const topicPresence = `pairbook/v5/${state.roomId}/presence`;
+        const topicSyncReq = `pairbook/v5/${state.roomId}/sync_req`;
 
-        // 部屋のデータ変更を購読（相手が書き込んだ瞬間に発火）
-        roomRef.get('records_data').on((data, key) => {
-          if (!data) return;
+        mqttClient.on('connect', () => {
+          updateSyncBadge('同期中', 'emerald');
+          mqttClient.subscribe([topicData, topicPresence, topicSyncReq], { qos: 1 });
+
+          // 接続時に相手端末へ最新データの共有をリクエスト
+          mqttClient.publish(topicSyncReq, JSON.stringify({ requesterId: state.userId }));
+          sendPresence();
+        });
+
+        mqttClient.on('message', (topic, message) => {
           try {
-            const parsed = JSON.parse(data);
-            if (Array.isArray(parsed.items) && parsed.timestamp > (state.lastUpdated || 0)) {
-              state.records = parsed.items;
-              state.lastUpdated = parsed.timestamp;
-              saveCachedRecords();
-              renderAll();
-              updateSyncBadge('同期完了', 'emerald');
-              if (parsed.senderName && parsed.senderId !== state.userId) {
-                showToast(`${escapeHtml(parsed.senderName)}さんが明細を更新しました`, 'info');
+            const payload = JSON.parse(message.toString());
+
+            // 1. データ更新メッセージ
+            if (topic === topicData) {
+              if (Array.isArray(payload.items) && payload.timestamp > (state.lastUpdated || 0)) {
+                state.records = payload.items;
+                state.lastUpdated = payload.timestamp;
+                saveCachedRecords();
+                renderAll();
+                updateSyncBadge('同期完了', 'emerald');
+                if (payload.senderName && payload.senderId !== state.userId) {
+                  showToast(`${escapeHtml(payload.senderName)}さんが明細を更新しました`, 'info');
+                }
+              }
+            }
+
+            // 2. 相手端末からの同期リクエスト（自分が最新を持っていれば返信）
+            if (topic === topicSyncReq) {
+              if (payload.requesterId !== state.userId && state.records.length > 0) {
+                mqttClient.publish(topicData, JSON.stringify({
+                  items: state.records,
+                  timestamp: state.lastUpdated,
+                  senderId: state.userId,
+                  senderName: state.userName
+                }), { qos: 1 });
+              }
+            }
+
+            // 3. 在室プレゼンス
+            if (topic === topicPresence) {
+              if (payload.userId && payload.userId !== state.userId) {
+                state.onlineUsers[payload.userId] = {
+                  name: payload.userName,
+                  color: payload.userColor,
+                  lastSeen: Date.now()
+                };
+                renderOnlineMembers();
               }
             }
           } catch (e) {
-            console.error('Data parse error', e);
+            console.error('MQTT message parse error', e);
           }
         });
 
-        // 相手のオンライン検知（プレゼンス）
-        roomRef.get('presence').map().on((userData, uid) => {
-          if (!userData) return;
-          try {
-            const u = typeof userData === 'string' ? JSON.parse(userData) : userData;
-            if (Date.now() - u.lastSeen < 18000) {
-              state.onlineUsers[uid] = u;
-              renderOnlineMembers();
-            }
-          } catch(e){}
+        mqttClient.on('error', (err) => {
+          console.error('MQTT error', err);
+          updateSyncBadge('再接続中', 'amber');
         });
 
-        sendPresence();
-        updateSyncBadge('同期中', 'emerald');
+        mqttClient.on('offline', () => {
+          updateSyncBadge('オフライン', 'slate');
+        });
 
       } catch (err) {
-        console.error('GunDB init error', err);
+        console.error('Realtime init error', err);
         updateSyncBadge('ローカル', 'slate');
       }
     }
 
     function sendPresence() {
-      if (!roomRef) return;
+      if (!mqttClient || !mqttClient.connected) return;
       try {
-        roomRef.get('presence').get(state.userId).put(JSON.stringify({
-          name: state.userName,
-          color: state.userColor,
-          lastSeen: Date.now()
+        const topicPresence = `pairbook/v5/${state.roomId}/presence`;
+        mqttClient.publish(topicPresence, JSON.stringify({
+          userId: state.userId,
+          userName: state.userName,
+          userColor: state.userColor
         }));
       } catch (e) {}
     }
 
-    // 定期的なハートビート送信（4秒おき）
+    // 定期的なハートビート送信（5秒おき）
     setInterval(() => {
       sendPresence();
       const now = Date.now();
@@ -759,7 +797,7 @@
         }
       });
       if (changed) renderOnlineMembers();
-    }, 4000);
+    }, 5000);
 
     function renderOnlineMembers() {
       const container = document.getElementById('onlineMembersList');
@@ -801,18 +839,19 @@
       state.lastUpdated = Date.now();
       saveCachedRecords();
 
-      if (roomRef) {
+      if (mqttClient && mqttClient.connected) {
         try {
+          const topicData = `pairbook/v5/${state.roomId}/data`;
           const payload = JSON.stringify({
             items: state.records,
             timestamp: state.lastUpdated,
             senderId: state.userId,
             senderName: state.userName
           });
-          roomRef.get('records_data').put(payload);
+          mqttClient.publish(topicData, payload, { qos: 1 });
           updateSyncBadge('同期完了', 'emerald');
         } catch (e) {
-          console.error('Sync put error', e);
+          console.error('Sync send error', e);
         }
       }
     }
@@ -1262,10 +1301,7 @@
       selectCategory('食費');
 
       showBottomSheet();
-      // スマホの数字キーボードに即フォーカス
-      setTimeout(() => {
-        document.getElementById('formAmount').focus();
-      }, 150);
+      // ※自動フォーカスをあえて行わないことで、スマホキーボードによる画面押し上げスクロールを防ぐ
     }
 
     function openRecordSheetForEdit(rec) {
@@ -1510,6 +1546,13 @@
       document.getElementById('btnBottomAdd').addEventListener('click', () => openRecordSheetForNew());
       document.getElementById('btnAddRecordForDate').addEventListener('click', () => openRecordSheetForNew(state.selectedCalendarDay));
       document.getElementById('btnCloseRecordSheet').addEventListener('click', closeRecordSheet);
+
+      // 背景の暗い部分をタップしても閉じるようにする
+      document.getElementById('recordSheetBackdrop').addEventListener('click', (e) => {
+        if (e.target.id === 'recordSheetBackdrop') {
+          closeRecordSheet();
+        }
+      });
 
       // カレンダー月送り
       document.getElementById('calPrevMonth').addEventListener('click', () => {
@@ -1781,7 +1824,7 @@
       setupEventListeners();
       loadCachedRecords();
       renderAll();
-      initGunEngine();
+      initRealtimeEngine();
     };
   </script>
 </body>
