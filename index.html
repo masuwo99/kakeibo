@@ -10,6 +10,8 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- MQTT.js (GitHub Pages等の外部環境でも設定不要でリアルタイム同期を実現するエンジン) -->
+  <script src="https://unpkg.com/mqtt@5.3.4/dist/mqtt.min.js"></script>
   <!-- Google Fonts Inter & Noto Sans JP -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -81,7 +83,7 @@
         <button id="btnRoomSettings" class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 transition">
           <i class="fa-solid fa-users text-brand-600"></i>
           <span class="font-medium">ルーム:</span>
-          <span id="currentRoomDisplay" class="font-bold text-brand-700">メインルーム</span>
+          <span id="currentRoomDisplay" class="font-bold text-brand-700">HOME101</span>
           <i class="fa-solid fa-chevron-down text-[10px] text-slate-400"></i>
         </button>
 
@@ -93,15 +95,33 @@
         </button>
 
         <!-- 同期ステータス -->
-        <div id="syncStatus" class="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-200">
-          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span>接続中</span>
+        <div id="syncStatus" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] bg-slate-100 text-slate-600 border border-slate-200">
+          <span class="w-2 h-2 rounded-full bg-slate-400 animate-pulse"></span>
+          <span>接続準備中</span>
         </div>
       </div>
     </div>
 
+    <!-- 参加中メンバー一覧バー（お互いのアイコン表示） -->
+    <div class="bg-indigo-50/60 border-t border-b border-indigo-100/70 px-4 py-2">
+      <div class="max-w-6xl mx-auto flex items-center justify-between text-xs">
+        <div class="flex items-center gap-2 overflow-x-auto py-0.5">
+          <span class="text-slate-500 font-medium flex items-center gap-1">
+            <i class="fa-solid fa-user-group text-brand-600"></i> 参加中のメンバー:
+          </span>
+          <!-- 動的アバター一覧 -->
+          <div id="onlineMembersList" class="flex items-center gap-1.5">
+            <!-- JSで動的生成 -->
+          </div>
+        </div>
+        <button id="btnShareQuick" class="text-[11px] font-semibold text-brand-600 hover:text-brand-800 flex items-center gap-1 shrink-0 ml-2">
+          <i class="fa-solid fa-share-nodes"></i> 招待リンク
+        </button>
+      </div>
+    </div>
+
     <!-- メインナビゲーションタブ -->
-    <div class="max-w-6xl mx-auto px-4 flex border-t border-slate-100 overflow-x-auto text-sm scrollbar-none">
+    <div class="max-w-6xl mx-auto px-4 flex border-b border-slate-100 overflow-x-auto text-sm scrollbar-none">
       <button data-tab="calendar" class="tab-btn active px-4 py-3 font-semibold border-b-2 border-brand-600 text-brand-600 flex items-center gap-2 whitespace-nowrap">
         <i class="fa-regular fa-calendar-days"></i> カレンダー
       </button>
@@ -425,7 +445,7 @@
   </main>
 
   <!-- ===============================
-       フローティング追加ボタン (スマホ・PC共通)
+       フローティング追加ボタン
   =============================== -->
   <div class="fixed bottom-6 right-6 z-20">
     <button id="btnFloatingAdd" class="w-14 h-14 rounded-full bg-gradient-to-r from-brand-600 to-indigo-600 text-white shadow-xl shadow-brand-500/30 flex items-center justify-center text-xl hover:scale-105 active:scale-95 transition-all">
@@ -438,7 +458,6 @@
   =============================== -->
   <div id="recordModal" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm hidden flex items-center justify-center p-4 overflow-y-auto">
     <div class="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-100 overflow-hidden my-8 animate-in fade-in duration-150">
-      <!-- モーダルヘッダー -->
       <div class="px-6 py-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
         <h3 id="recordModalTitle" class="font-bold text-slate-800 text-base flex items-center gap-2">
           <i class="fa-solid fa-pen-to-square text-brand-600"></i> 家計簿の入力
@@ -448,11 +467,10 @@
         </button>
       </div>
 
-      <!-- 入力フォーム -->
       <form id="recordForm" class="p-6 space-y-4">
         <input type="hidden" id="editRecordId" value="">
 
-        <!-- 1. 収支区分 (支出 / 収入) -->
+        <!-- 1. 収支区分 -->
         <div>
           <label class="block text-xs font-bold text-slate-600 mb-1.5">収支の区分 <span class="text-rose-500">*</span></label>
           <div class="grid grid-cols-2 gap-2">
@@ -470,7 +488,6 @@
           <div>
             <label for="formDate" class="block text-xs font-bold text-slate-600 mb-1">日付 <span class="text-rose-500">*</span></label>
             <input type="date" id="formDate" required class="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm font-medium">
-            <span class="text-[10px] text-slate-400">過去や未来の日付も自由に設定可能</span>
           </div>
           <div>
             <label for="formAmount" class="block text-xs font-bold text-slate-600 mb-1">金額 (円) <span class="text-rose-500">*</span></label>
@@ -481,16 +498,14 @@
           </div>
         </div>
 
-        <!-- 3. カテゴリ（品目）の選択 -->
+        <!-- 3. カテゴリ（品目） -->
         <div>
           <label class="block text-xs font-bold text-slate-600 mb-1">カテゴリ（品目） <span class="text-rose-500">*</span></label>
-          <div id="categoryContainer" class="grid grid-cols-3 sm:grid-cols-4 gap-2 text-xs">
-            <!-- JSで動的生成 -->
-          </div>
+          <div id="categoryContainer" class="grid grid-cols-3 sm:grid-cols-4 gap-2 text-xs"></div>
           <input type="hidden" id="formCategory" value="食費" required>
         </div>
 
-        <!-- 4. 共有設定（超重要：共有するか個人用か） -->
+        <!-- 4. 共有設定 -->
         <div class="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-100 space-y-2">
           <div class="flex items-center justify-between">
             <div>
@@ -508,19 +523,18 @@
           </div>
         </div>
 
-        <!-- 5. 支払者（誰が支払ったか） -->
+        <!-- 5. 支払者 -->
         <div>
           <label for="formPayer" class="block text-xs font-bold text-slate-600 mb-1">支払った人（立替者）</label>
           <input type="text" id="formPayer" placeholder="例: 自分, パートナー" class="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500 text-xs font-medium">
         </div>
 
-        <!-- 6. メモ・詳細品目 -->
+        <!-- 6. メモ -->
         <div>
           <label for="formMemo" class="block text-xs font-bold text-slate-600 mb-1">内容・メモ・店名</label>
-          <input type="text" id="formMemo" placeholder="例: スーパーでの週末買い出し" class="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500 text-xs">
+          <input type="text" id="formMemo" placeholder="例: スーパーでの買い出し" class="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500 text-xs">
         </div>
 
-        <!-- ボタン類 -->
         <div class="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
           <button type="button" id="btnCancelRecordModal" class="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">
             キャンセル
@@ -549,22 +563,22 @@
 
       <div class="space-y-3 text-xs">
         <div>
-          <label class="block font-bold text-slate-600 mb-1">現在のルームID</label>
+          <label class="block font-bold text-slate-600 mb-1">現在のルーム合言葉（ID）</label>
           <div class="flex items-center gap-2">
             <input type="text" id="inputRoomId" class="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 font-mono text-sm uppercase font-bold text-slate-800 bg-slate-50" readonly>
             <button id="btnCopyRoomLink" class="px-3.5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold transition flex items-center gap-1.5">
-              <i class="fa-regular fa-copy"></i> 共有リンク
+              <i class="fa-regular fa-copy"></i> 共有URLコピー
             </button>
           </div>
           <p class="text-[11px] text-slate-400 mt-1">
-            パートナーにこのリンクまたはルームIDを渡すと、同じ家計簿をリアルタイムに共有できます。
+            パートナーにこのリンクを送るか同じ合言葉を入力してもらうと、リアルタイムに同じ家計簿を共有できます。
           </p>
         </div>
 
         <div class="pt-3 border-t border-slate-100">
           <label class="block font-bold text-slate-600 mb-1">別のルームに参加 または 新規作成</label>
           <div class="flex items-center gap-2">
-            <input type="text" id="inputTargetRoomId" placeholder="合言葉または英数字ID" class="flex-1 px-3 py-2 rounded-xl border border-slate-200 uppercase font-mono font-bold text-xs">
+            <input type="text" id="inputTargetRoomId" placeholder="合言葉（例: TANAKA-ROOM）" class="flex-1 px-3 py-2 rounded-xl border border-slate-200 uppercase font-mono font-bold text-xs">
             <button id="btnJoinRoom" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold transition">
               移動
             </button>
@@ -596,12 +610,8 @@
 
       <div class="space-y-3 text-xs">
         <div>
-          <label class="block font-bold text-slate-600 mb-1">ニックネーム（家計簿に記録されます）</label>
+          <label class="block font-bold text-slate-600 mb-1">ニックネーム（家計簿やアイコンに表示）</label>
           <input type="text" id="inputProfileName" placeholder="例: たろう, はなこ" class="w-full px-3 py-2.5 rounded-xl border border-slate-200 font-bold text-sm">
-        </div>
-        <div>
-          <label class="block text-[11px] text-slate-400 mb-1">あなたの識別ユーザーID (システム用)</label>
-          <input type="text" id="displayFullUserId" readonly class="w-full px-2 py-1.5 rounded-lg bg-slate-100 text-[10px] font-mono text-slate-500 border border-slate-200">
         </div>
 
         <button id="btnSaveProfile" class="w-full py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold transition">
@@ -612,7 +622,7 @@
   </div>
 
   <!-- ===============================
-       削除確認カスタムダイアログ (alert/confirm不使用)
+       削除確認カスタムダイアログ
   =============================== -->
   <div id="confirmDialog" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm hidden flex items-center justify-center p-4">
     <div class="bg-white w-full max-w-sm rounded-3xl shadow-2xl p-6 space-y-4 text-center">
@@ -620,8 +630,8 @@
         <i class="fa-solid fa-trash-can"></i>
       </div>
       <div>
-        <h4 id="confirmDialogTitle" class="font-bold text-slate-800 text-base">明細を削除しますか？</h4>
-        <p id="confirmDialogMessage" class="text-xs text-slate-500 mt-1">この操作は取り消せません。</p>
+        <h4 class="font-bold text-slate-800 text-base">明細を削除しますか？</h4>
+        <p class="text-xs text-slate-500 mt-1">この操作はルーム内の全員に反映されます。</p>
       </div>
       <div class="flex items-center justify-center gap-3 pt-2">
         <button id="btnCancelConfirm" class="flex-1 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50">キャンセル</button>
@@ -637,29 +647,28 @@
        JavaScript アプリケーションロジック
   =============================== -->
   <script type="module">
-    // Firebase 公式モジュールインポート
+    // Firebase 公式モジュールインポート（Canvas環境用）
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
     import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
     import { getFirestore, doc, collection, addDoc, updateDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
     /* ========================================================
-       0. Safari / Googleサイト埋め込み用 安全ストレージラッパー
+       0. 安全ストレージラッパー
     ======================================================== */
     const safeStorage = {
       getItem(key) {
         try {
           return window.localStorage.getItem(key);
         } catch (e) {
-          console.warn('localStorageアクセス制限を検知（メモリ動作に切り替えます）', e);
-          return this._memory ? this._memory[key] || null : null;
+          return this._mem ? this._mem[key] : null;
         }
       },
       setItem(key, val) {
         try {
           window.localStorage.setItem(key, val);
         } catch (e) {
-          if (!this._memory) this._memory = {};
-          this._memory[key] = val;
+          if (!this._mem) this._mem = {};
+          this._mem[key] = val;
         }
       }
     };
@@ -692,24 +701,32 @@
        2. アプリケーション状態管理
     ======================================================== */
     const state = {
-      appId: typeof __app_id !== 'undefined' ? __app_id : 'pairbook-default',
+      appId: typeof __app_id !== 'undefined' ? __app_id : 'pairbook-kakeibo-v1',
       roomId: getInitialRoomId(),
-      userId: null,
-      userName: safeStorage.getItem('pairbook_username') || '自分',
+      userId: safeStorage.getItem('pairbook_uid') || ('user_' + Math.random().toString(36).substring(2, 10)),
+      userName: safeStorage.getItem('pairbook_username') || ('ユーザー' + Math.floor(10 + Math.random() * 90)),
+      userColor: safeStorage.getItem('pairbook_usercolor') || getRandomColor(),
       records: [],
+      onlineUsers: {}, // userId -> { userName, color, lastSeen }
       currentCalendarDate: new Date(),
       selectedCalendarDay: formatDateYMD(new Date()),
       activeTab: 'calendar',
-      currentRecordType: 'expense', // 'expense' or 'income'
+      currentRecordType: 'expense',
       selectedCategory: '食費',
-      graphScope: 'shared', // 'shared' or 'all'
+      graphScope: 'shared',
       analyticsMonth: formatYearMonth(new Date()),
-      unsubscribeSnapshot: null,
-      charts: {
-        pie: null,
-        bar: null
-      }
+      syncMode: 'connecting', // 'firebase' or 'mqtt' or 'local'
+      charts: { pie: null, bar: null }
     };
+
+    safeStorage.setItem('pairbook_uid', state.userId);
+    safeStorage.setItem('pairbook_username', state.userName);
+    safeStorage.setItem('pairbook_usercolor', state.userColor);
+
+    function getRandomColor() {
+      const colors = ['#4f46e5', '#059669', '#dc2626', '#d97706', '#7c3aed', '#db2777', '#0284c7'];
+      return colors[Math.floor(Math.random() * colors.length)];
+    }
 
     function getInitialRoomId() {
       try {
@@ -718,9 +735,7 @@
         if (roomFromUrl && roomFromUrl.trim() !== '') {
           return roomFromUrl.trim().toUpperCase();
         }
-      } catch (e) {
-        // iframe環境でのURL参照エラーガード
-      }
+      } catch (e) {}
       return safeStorage.getItem('pairbook_room_id') || 'HOME101';
     }
 
@@ -728,36 +743,42 @@
       state.roomId = newId.trim().toUpperCase();
       safeStorage.setItem('pairbook_room_id', state.roomId);
 
-      // Safari/iframe環境でのSecurityErrorを防止
       try {
         const newUrl = `${window.location.pathname}?room=${encodeURIComponent(state.roomId)}`;
         window.history.replaceState(null, '', newUrl);
-      } catch (e) {
-        // iframe内でのURL書き換え制限を安全にスルー
-      }
+      } catch (e) {}
 
       document.getElementById('currentRoomDisplay').textContent = state.roomId;
       document.getElementById('inputRoomId').value = state.roomId;
-      // ルーム切り替え時にリスナーを再購読
-      listenToRecords();
-      showToast(`ルーム「${state.roomId}」に接続しました`, 'info');
+
+      // ストレージから既存レコードを復元
+      loadCachedRecords();
+      // 同期接続を再確立
+      connectSyncEngine();
+      showToast(`ルーム「${state.roomId}」に移動しました`, 'info');
     }
 
     /* ========================================================
-       3. Firebase 初期化 & 認証
+       3. ハイブリッド同期エンジン (Firebase & MQTT WebSockets)
+       ※ GitHub Pagesでも設定不要で全世界リアルタイム同期
     ======================================================== */
     let db = null;
     let auth = null;
+    let mqttClient = null;
+    let unsubscribeFirestore = null;
 
-    async function initFirebase() {
-      try {
-        if (typeof __firebase_config !== 'undefined') {
+    async function initSync() {
+      // 1. ローカルキャッシュの復元
+      loadCachedRecords();
+
+      // 2. Firebase環境判定
+      if (typeof __firebase_config !== 'undefined') {
+        try {
           const firebaseConfig = JSON.parse(__firebase_config);
           const app = initializeApp(firebaseConfig);
           auth = getAuth(app);
           db = getFirestore(app);
 
-          // 認証
           if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
             await signInWithCustomToken(auth, __initial_auth_token);
           } else {
@@ -767,124 +788,318 @@
           onAuthStateChanged(auth, (user) => {
             if (user) {
               state.userId = user.uid;
-              document.getElementById('displayFullUserId').value = user.uid;
-              updateSyncStatus('接続中', 'emerald');
-              listenToRecords();
+              state.syncMode = 'firebase';
+              updateSyncStatus('オンライン同期中', 'emerald');
+              listenFirebase();
             }
           });
-        } else {
-          // Firebase設定がない場合のローカルインメモリデモモード
-          console.warn('Firebase config is not found. Running in local session mode.');
-          state.userId = 'demo-user-' + Math.random().toString(36).substring(2, 8);
-          document.getElementById('displayFullUserId').value = state.userId;
-          updateSyncStatus('ローカル動作中', 'amber');
-          setupSampleRecords();
-          renderAll();
+          return;
+        } catch (e) {
+          console.warn('Firebase init fallback to MQTT', e);
         }
-      } catch (err) {
-        console.error('Firebase Init Error:', err);
-        updateSyncStatus('同期エラー', 'rose');
-        showToast('データベース接続に失敗しました（ローカルで続行します）', 'error');
-        state.userId = 'user-' + Math.random().toString(36).substring(2, 8);
-        document.getElementById('displayFullUserId').value = state.userId;
-        setupSampleRecords();
-        renderAll();
       }
+
+      // 3. GitHub Pagesなど外部環境: 高速・無料WebSocket (MQTT) で同期
+      connectMqttEngine();
+    }
+
+    function connectSyncEngine() {
+      if (state.syncMode === 'firebase') {
+        listenFirebase();
+      } else {
+        connectMqttEngine();
+      }
+    }
+
+    /* --- MQTT WebSocket 同期 (GitHub Pages向け) --- */
+    function connectMqttEngine() {
+      if (mqttClient) {
+        try { mqttClient.end(); } catch (e) {}
+      }
+
+      updateSyncStatus('接続中...', 'amber');
+
+      // 公開高速WebSocketブローカー (TLS暗号化・CORS対応)
+      const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
+      const clientId = 'pb_' + state.userId + '_' + Math.random().toString(16).substring(2, 6);
+
+      try {
+        mqttClient = mqtt.connect(brokerUrl, {
+          clientId: clientId,
+          clean: true,
+          connectTimeout: 5000,
+          reconnectPeriod: 3000
+        });
+
+        const topicSync = `pairbook-sync-v2/${state.roomId}/data`;
+        const topicPresence = `pairbook-sync-v2/${state.roomId}/presence`;
+
+        mqttClient.on('connect', () => {
+          state.syncMode = 'mqtt';
+          updateSyncStatus('オンライン同期中', 'emerald');
+          mqttClient.subscribe([topicSync, topicPresence]);
+
+          // 入室を通知
+          sendPresence();
+
+          // 部屋の最新データをリクエスト
+          mqttClient.publish(topicPresence, JSON.stringify({
+            type: 'request_sync',
+            userId: state.userId
+          }));
+        });
+
+        mqttClient.on('message', (topic, payload) => {
+          try {
+            const data = JSON.parse(payload.toString());
+
+            // プレゼンス（参加者検知）
+            if (topic === topicPresence) {
+              handlePresenceMessage(data);
+              return;
+            }
+
+            // データ同期
+            if (topic === topicSync) {
+              if (data.senderId === state.userId) return; // 自分の送信はスキップ
+
+              if (data.type === 'full_sync' && Array.isArray(data.records)) {
+                state.records = data.records;
+                saveCachedRecords();
+                renderAll();
+                showToast(`${escapeHtml(data.senderName || 'パートナー')}から家計簿を同期しました`, 'info');
+              } else if (data.type === 'record_added') {
+                state.records = state.records.filter(r => r.id !== data.record.id);
+                state.records.unshift(data.record);
+                saveCachedRecords();
+                renderAll();
+                showToast(`${escapeHtml(data.senderName)}さんが記帳を追加しました！`, 'info');
+              } else if (data.type === 'record_deleted') {
+                state.records = state.records.filter(r => r.id !== data.recordId);
+                saveCachedRecords();
+                renderAll();
+                showToast(`${escapeHtml(data.senderName)}さんが明細を削除しました`, 'info');
+              }
+            }
+          } catch (err) {
+            console.error('MQTT parse error:', err);
+          }
+        });
+
+        mqttClient.on('error', (err) => {
+          console.warn('MQTT Connection error', err);
+          updateSyncStatus('再接続中', 'amber');
+        });
+
+        mqttClient.on('close', () => {
+          updateSyncStatus('接続待機中', 'slate');
+        });
+
+      } catch (err) {
+        console.error('MQTT setup failed', err);
+        updateSyncStatus('ローカル動作中', 'slate');
+      }
+    }
+
+    /* --- プレゼンス（参加者）管理 --- */
+    function sendPresence() {
+      if (!mqttClient || !mqttClient.connected) return;
+      const topicPresence = `pairbook-sync-v2/${state.roomId}/presence`;
+      mqttClient.publish(topicPresence, JSON.stringify({
+        type: 'ping',
+        userId: state.userId,
+        userName: state.userName,
+        userColor: state.userColor,
+        timestamp: Date.now()
+      }));
+    }
+
+    function handlePresenceMessage(data) {
+      if (!data) return;
+
+      // 誰かが最新データを求めて入室してきた時、自分がデータを持っていれば送信して助ける
+      if (data.type === 'request_sync' && data.userId !== state.userId) {
+        if (state.records.length > 0 && mqttClient && mqttClient.connected) {
+          const topicSync = `pairbook-sync-v2/${state.roomId}/data`;
+          mqttClient.publish(topicSync, JSON.stringify({
+            type: 'full_sync',
+            senderId: state.userId,
+            senderName: state.userName,
+            records: state.records
+          }));
+        }
+      }
+
+      if (data.type === 'ping') {
+        state.onlineUsers[data.userId] = {
+          name: data.userName || 'ゲスト',
+          color: data.userColor || '#4f46e5',
+          lastSeen: Date.now(),
+          isMe: data.userId === state.userId
+        };
+        renderOnlineMembers();
+      }
+    }
+
+    // 4秒おきに自分の存在を周囲に発信 & 15秒以上音信のないユーザーを退出扱いにする
+    setInterval(() => {
+      sendPresence();
+      const now = Date.now();
+      let changed = false;
+      Object.keys(state.onlineUsers).forEach(uid => {
+        if (now - state.onlineUsers[uid].lastSeen > 12000 && !state.onlineUsers[uid].isMe) {
+          delete state.onlineUsers[uid];
+          changed = true;
+        }
+      });
+      if (changed) renderOnlineMembers();
+    }, 4000);
+
+    function renderOnlineMembers() {
+      const container = document.getElementById('onlineMembersList');
+      container.innerHTML = '';
+
+      // 自分を必ず先頭に
+      state.onlineUsers[state.userId] = {
+        name: state.userName,
+        color: state.userColor,
+        lastSeen: Date.now(),
+        isMe: true
+      };
+
+      Object.entries(state.onlineUsers).forEach(([uid, u]) => {
+        const badge = document.createElement('div');
+        badge.className = 'flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-slate-200 shadow-xs text-slate-700 animate-in fade-in duration-200';
+        badge.innerHTML = `
+          <span class="w-3.5 h-3.5 rounded-full text-white text-[9px] font-bold flex items-center justify-center" style="background-color: ${u.color};">
+            ${escapeHtml(u.name.substring(0, 1))}
+          </span>
+          <span class="font-bold text-[11px]">${escapeHtml(u.name)}${u.isMe ? ' (私)' : ''}</span>
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+        `;
+        container.appendChild(badge);
+      });
+    }
+
+    /* --- Firebase Firestore同期（Canvasプレビュー時） --- */
+    function listenFirebase() {
+      if (!db || !state.userId) return;
+      if (unsubscribeFirestore) unsubscribeFirestore();
+
+      const recordsCol = collection(db, 'artifacts', state.appId, 'public', 'data', 'household_records');
+
+      unsubscribeFirestore = onSnapshot(recordsCol, (snapshot) => {
+        const fetched = [];
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data();
+          if (data.roomId === state.roomId) {
+            if (data.isShared || data.createdById === state.userId) {
+              fetched.push({ id: docSnap.id, ...data });
+            }
+          }
+        });
+        fetched.sort((a, b) => new Date(b.date) - new Date(a.date));
+        state.records = fetched;
+        saveCachedRecords();
+        renderAll();
+      }, (err) => {
+        console.error('Firestore snapshot error', err);
+      });
+    }
+
+    /* --- キャッシュ読み書き --- */
+    function loadCachedRecords() {
+      const key = `pairbook_data_${state.roomId}`;
+      const saved = safeStorage.getItem(key);
+      if (saved) {
+        try {
+          state.records = JSON.parse(saved);
+        } catch (e) {}
+      } else {
+        setupSampleRecords();
+      }
+    }
+
+    function saveCachedRecords() {
+      const key = `pairbook_data_${state.roomId}`;
+      safeStorage.setItem(key, JSON.stringify(state.records));
     }
 
     function updateSyncStatus(text, color) {
       const el = document.getElementById('syncStatus');
-      el.className = `flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] bg-${color}-50 text-${color}-700 border border-${color}-200`;
+      el.className = `flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] bg-${color}-50 text-${color}-700 border border-${color}-200 transition-all`;
       el.innerHTML = `<span class="w-2 h-2 rounded-full bg-${color}-500 animate-pulse"></span><span>${text}</span>`;
     }
 
     /* ========================================================
-       4. Firestore リアルタイム同期 (ルール厳守)
-    ======================================================== */
-    function listenToRecords() {
-      if (!db || !state.userId) return;
-
-      if (state.unsubscribeSnapshot) {
-        state.unsubscribeSnapshot();
-      }
-
-      // RULE 1: STRICT PATH
-      // public data collection: /artifacts/{appId}/public/data/household_records
-      const recordsCol = collection(db, 'artifacts', state.appId, 'public', 'data', 'household_records');
-
-      // RULE 2: No Complex Queries! プレーンに全件取得してJSメモリでフィルタ
-      state.unsubscribeSnapshot = onSnapshot(recordsCol, (snapshot) => {
-        const fetched = [];
-        snapshot.forEach(docSnap => {
-          const data = docSnap.data();
-          // ルームIDでフィルタ
-          if (data.roomId === state.roomId) {
-            // 共有設定がOFF（個人用）の場合、自分が作成したもののみ表示する
-            if (data.isShared || data.createdById === state.userId) {
-              fetched.push({
-                id: docSnap.id,
-                ...data
-              });
-            }
-          }
-        });
-
-        // 日付の新しい順にソート (JSメモリ内)
-        fetched.sort((a, b) => new Date(b.date) - new Date(a.date));
-        state.records = fetched;
-        renderAll();
-      }, (err) => {
-        console.error('Firestore onSnapshot error:', err);
-        showToast('データの取得中にエラーが発生しました', 'error');
-      });
-    }
-
-    /* ========================================================
-       5. データCRUD操作
+       4. データCRUD操作
     ======================================================== */
     async function saveRecord(recordData) {
-      if (!db) {
-        // ローカルデモ
+      // 1. Firebase環境の場合
+      if (db && state.syncMode === 'firebase') {
+        const recordsCol = collection(db, 'artifacts', state.appId, 'public', 'data', 'household_records');
         if (recordData.id) {
-          const idx = state.records.findIndex(r => r.id === recordData.id);
-          if (idx !== -1) state.records[idx] = recordData;
+          const docRef = doc(db, 'artifacts', state.appId, 'public', 'data', 'household_records', recordData.id);
+          const { id, ...payload } = recordData;
+          payload.updatedAt = new Date().toISOString();
+          await updateDoc(docRef, payload);
         } else {
-          recordData.id = 'rec_' + Date.now();
-          state.records.unshift(recordData);
+          recordData.createdAt = new Date().toISOString();
+          recordData.createdById = state.userId;
+          recordData.roomId = state.roomId;
+          await addDoc(recordsCol, recordData);
         }
-        renderAll();
         return;
       }
 
-      const recordsCol = collection(db, 'artifacts', state.appId, 'public', 'data', 'household_records');
-
-      if (recordData.id) {
-        // 更新
-        const docRef = doc(db, 'artifacts', state.appId, 'public', 'data', 'household_records', recordData.id);
-        const { id, ...payload } = recordData;
-        payload.updatedAt = new Date().toISOString();
-        await updateDoc(docRef, payload);
-      } else {
-        // 新規作成
-        recordData.createdAt = new Date().toISOString();
+      // 2. MQTT (GitHub Pages) 環境の場合
+      if (!recordData.id) {
+        recordData.id = 'rec_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
         recordData.createdById = state.userId;
-        recordData.roomId = state.roomId;
-        await addDoc(recordsCol, recordData);
+        recordData.createdAt = new Date().toISOString();
+      }
+
+      state.records = state.records.filter(r => r.id !== recordData.id);
+      state.records.unshift(recordData);
+      state.records.sort((a, b) => new Date(b.date) - new Date(a.date));
+      saveCachedRecords();
+      renderAll();
+
+      if (mqttClient && mqttClient.connected) {
+        const topicSync = `pairbook-sync-v2/${state.roomId}/data`;
+        mqttClient.publish(topicSync, JSON.stringify({
+          type: 'record_added',
+          senderId: state.userId,
+          senderName: state.userName,
+          record: recordData
+        }));
       }
     }
 
     async function deleteRecord(recordId) {
-      if (!db) {
-        state.records = state.records.filter(r => r.id !== recordId);
-        renderAll();
+      if (db && state.syncMode === 'firebase') {
+        const docRef = doc(db, 'artifacts', state.appId, 'public', 'data', 'household_records', recordId);
+        await deleteDoc(docRef);
         return;
       }
-      const docRef = doc(db, 'artifacts', state.appId, 'public', 'data', 'household_records', recordId);
-      await deleteDoc(docRef);
+
+      state.records = state.records.filter(r => r.id !== recordId);
+      saveCachedRecords();
+      renderAll();
+
+      if (mqttClient && mqttClient.connected) {
+        const topicSync = `pairbook-sync-v2/${state.roomId}/data`;
+        mqttClient.publish(topicSync, JSON.stringify({
+          type: 'record_deleted',
+          senderId: state.userId,
+          senderName: state.userName,
+          recordId: recordId
+        }));
+      }
     }
 
     /* ========================================================
-       6. UI描画 (全体オーケストレーション)
+       5. UI描画 (カレンダー・一覧・清算・グラフ)
     ======================================================== */
     function renderAll() {
       renderCalendar();
@@ -895,16 +1110,12 @@
       populateFilterCategories();
     }
 
-    /* --------------------------------------------------------
-       カレンダー描画ロジック
-    -------------------------------------------------------- */
     function renderCalendar() {
       const year = state.currentCalendarDate.getFullYear();
-      const month = state.currentCalendarDate.getMonth(); // 0-indexed
+      const month = state.currentCalendarDate.getMonth();
 
       document.getElementById('calendarTitle').textContent = `${year}年 ${month + 1}月`;
 
-      // 今月の収支集計
       const currentMonthStr = `${year}-${String(month + 1).padStart(2, '0')}`;
       const monthRecords = state.records.filter(r => r.date.startsWith(currentMonthStr));
 
@@ -922,37 +1133,29 @@
       balEl.textContent = `${balance >= 0 ? '+' : ''}¥${balance.toLocaleString()}`;
       balEl.className = `text-base sm:text-lg font-bold ${balance >= 0 ? 'text-brand-700' : 'text-rose-700'}`;
 
-      // カレンダーマスの構築
       const firstDayOfMonth = new Date(year, month, 1).getDay();
       const lastDateOfMonth = new Date(year, month + 1, 0).getDate();
       const lastDateOfPrevMonth = new Date(year, month, 0).getDate();
 
       const grid = document.getElementById('calendarGrid');
       grid.innerHTML = '';
-
       const todayStr = formatDateYMD(new Date());
 
-      // 前月の日付埋め
       for (let i = firstDayOfMonth - 1; i >= 0; i--) {
         const d = lastDateOfPrevMonth - i;
-        const cell = createCalendarCell(d, true, null);
-        grid.appendChild(cell);
+        grid.appendChild(createCalendarCell(d, true, null));
       }
 
-      // 当月の日付
       for (let d = 1; d <= lastDateOfMonth; d++) {
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
         const dayRecords = state.records.filter(r => r.date === dateStr);
-        const cell = createCalendarCell(d, false, dateStr, dayRecords, dateStr === todayStr, dateStr === state.selectedCalendarDay);
-        grid.appendChild(cell);
+        grid.appendChild(createCalendarCell(d, false, dateStr, dayRecords, dateStr === todayStr, dateStr === state.selectedCalendarDay));
       }
 
-      // 翌月の日付埋め（7の倍数になるまで）
       const totalCells = firstDayOfMonth + lastDateOfMonth;
       const remaining = (7 - (totalCells % 7)) % 7;
       for (let d = 1; d <= remaining; d++) {
-        const cell = createCalendarCell(d, true, null);
-        grid.appendChild(cell);
+        grid.appendChild(createCalendarCell(d, true, null));
       }
     }
 
@@ -967,7 +1170,6 @@
         return cell;
       }
 
-      // 日付ヘッダー
       const header = document.createElement('div');
       header.className = 'flex items-center justify-between';
 
@@ -978,7 +1180,6 @@
       numSpan.textContent = dayNum;
       header.appendChild(numSpan);
 
-      // 件数バッジ
       if (dayRecords.length > 0) {
         const countSpan = document.createElement('span');
         countSpan.className = 'text-[9px] px-1 py-0.2 bg-slate-100 rounded text-slate-500 font-mono';
@@ -987,18 +1188,15 @@
       }
       cell.appendChild(header);
 
-      // 収支バッジ表示
       const badgeContainer = document.createElement('div');
       badgeContainer.className = 'space-y-0.5 mt-1';
 
       let dayExp = 0;
       let dayInc = 0;
-      let hasShared = false;
 
       dayRecords.forEach(r => {
         if (r.type === 'expense') dayExp += Number(r.amount);
         if (r.type === 'income') dayInc += Number(r.amount);
-        if (r.isShared) hasShared = true;
       });
 
       if (dayExp > 0) {
@@ -1038,7 +1236,6 @@
       const dayObj = new Date(state.selectedCalendarDay);
       const weekDays = ['日', '月', '火', '水', '木', '金', '土'];
       const weekDay = weekDays[dayObj.getDay()];
-
       titleEl.innerHTML = `${state.selectedCalendarDay} (${weekDay}) の家計簿`;
 
       const dayRecords = state.records.filter(r => r.date === state.selectedCalendarDay);
@@ -1089,14 +1286,10 @@
 
         item.querySelector('.btn-edit-rec').addEventListener('click', () => openRecordModalForEdit(rec));
         item.querySelector('.btn-delete-rec').addEventListener('click', () => confirmDeleteRecord(rec.id));
-
         listEl.appendChild(item);
       });
     }
 
-    /* --------------------------------------------------------
-       明細一覧テーブル描画ロジック
-    -------------------------------------------------------- */
     function renderRecordsTable() {
       const tbody = document.getElementById('recordsTableBody');
       const emptyNotice = document.getElementById('noRecordsNotice');
@@ -1148,10 +1341,10 @@
           </td>
           <td class="py-3 px-4 text-center">
             <div class="inline-flex items-center gap-1">
-              <button class="p-1.5 text-slate-400 hover:text-brand-600 rounded-lg hover:bg-slate-100 transition btn-edit" title="編集">
+              <button class="p-1.5 text-slate-400 hover:text-brand-600 rounded-lg hover:bg-slate-100 transition btn-edit">
                 <i class="fa-solid fa-pen"></i>
               </button>
-              <button class="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100 transition btn-del" title="削除">
+              <button class="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-slate-100 transition btn-del">
                 <i class="fa-solid fa-trash"></i>
               </button>
             </div>
@@ -1160,16 +1353,11 @@
 
         tr.querySelector('.btn-edit').addEventListener('click', () => openRecordModalForEdit(rec));
         tr.querySelector('.btn-del').addEventListener('click', () => confirmDeleteRecord(rec.id));
-
         tbody.appendChild(tr);
       });
     }
 
-    /* --------------------------------------------------------
-       月末清算・立替割り勘ロジック
-    -------------------------------------------------------- */
     function renderSettlement() {
-      // 当月の「共有」支出のみを抽出
       const currentMonthStr = formatYearMonth(state.currentCalendarDate);
       const sharedExpenses = state.records.filter(r => 
         r.isShared && 
@@ -1177,7 +1365,6 @@
         r.date.startsWith(currentMonthStr)
       );
 
-      // 支払者ごとの立替合計を計算
       const payerTotals = {};
       let totalSharedAmount = 0;
 
@@ -1205,17 +1392,14 @@
         return;
       }
 
-      // メンバー数が1人の場合
       if (members.length === 1) {
         const loneMember = members[0];
         instructionEl.innerHTML = `<span class="text-slate-700">${escapeHtml(loneMember)} さんが全額 (¥${totalSharedAmount.toLocaleString()}) を支払っています。</span>`;
       } else if (members.length === 2) {
-        // 2人のカップル・ルームメイトの場合（最も標準的なケース）
         const p1 = members[0];
         const p2 = members[1];
         const a1 = payerTotals[p1];
         const a2 = payerTotals[p2];
-        const targetShare = Math.round(totalSharedAmount / 2);
 
         if (a1 > a2) {
           const diff = Math.round((a1 - a2) / 2);
@@ -1235,12 +1419,10 @@
           instructionEl.innerHTML = '<span class="text-emerald-700 font-bold">2人の支払額はピッタリ同額です！送金の必要はありません 🎉</span>';
         }
       } else {
-        // 3人以上の場合（均等負担額との差額を提示）
         const avgShare = Math.round(totalSharedAmount / members.length);
         instructionEl.innerHTML = `1人あたりの目標負担額: <span class="text-brand-600 font-extrabold">¥${avgShare.toLocaleString()}</span> (合計 ¥${totalSharedAmount.toLocaleString()})`;
       }
 
-      // メンバー別カードの描画
       const avg = Math.round(totalSharedAmount / (members.length || 1));
       members.forEach(m => {
         const paid = payerTotals[m];
@@ -1302,11 +1484,7 @@
       });
     }
 
-    /* --------------------------------------------------------
-       グラフ分析 (Chart.js)
-    -------------------------------------------------------- */
     function renderAnalytics() {
-      // 月選択ドロップダウンの構築（ユニークな月リスト）
       const monthSelect = document.getElementById('analyticsMonthSelect');
       const uniqueMonths = [...new Set(state.records.map(r => formatYearMonth(new Date(r.date))))];
       if (!uniqueMonths.includes(state.analyticsMonth)) {
@@ -1316,14 +1494,12 @@
 
       monthSelect.innerHTML = uniqueMonths.map(m => `<option value="${m}" ${m === state.analyticsMonth ? 'selected' : ''}>${m}</option>`).join('');
 
-      // 対象データのフィルタ
       const targetRecords = state.records.filter(r => {
         if (!r.date.startsWith(state.analyticsMonth)) return false;
         if (state.graphScope === 'shared' && !r.isShared) return false;
         return true;
       });
 
-      // 1. カテゴリ別支出円グラフ
       const expenseRecords = targetRecords.filter(r => r.type === 'expense');
       const catSums = {};
       expenseRecords.forEach(r => {
@@ -1340,10 +1516,7 @@
         pieNotice.classList.add('hidden');
         const labels = Object.keys(catSums);
         const data = Object.values(catSums);
-        const bgColors = [
-          '#f97316', '#10b981', '#3b82f6', '#f59e0b', '#6366f1',
-          '#ec4899', '#8b5cf6', '#ef4444', '#14b8a6', '#64748b'
-        ];
+        const bgColors = ['#f97316', '#10b981', '#3b82f6', '#f59e0b', '#6366f1', '#ec4899', '#8b5cf6', '#ef4444', '#14b8a6', '#64748b'];
 
         if (state.charts.pie) state.charts.pie.destroy();
         state.charts.pie = new Chart(pieCanvas, {
@@ -1361,16 +1534,12 @@
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-              legend: {
-                position: 'bottom',
-                labels: { boxWidth: 12, font: { size: 10 } }
-              }
+              legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } }
             }
           }
         });
       }
 
-      // 2. メンバー別支出比較棒グラフ
       const memberSums = {};
       expenseRecords.forEach(r => {
         const p = (r.payer || '未指定').trim();
@@ -1403,15 +1572,11 @@
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: {
-              legend: { display: false }
-            },
+            plugins: { legend: { display: false } },
             scales: {
               y: {
                 beginAtZero: true,
-                ticks: {
-                  callback: (val) => '¥' + val.toLocaleString()
-                }
+                ticks: { callback: (val) => '¥' + val.toLocaleString() }
               }
             }
           }
@@ -1420,7 +1585,7 @@
     }
 
     /* ========================================================
-       7. レシートAI読み取り機能 (Gemini 3 Flash API)
+       6. レシートAI読み取り機能
     ======================================================== */
     let lastReceiptParsedData = null;
 
@@ -1451,12 +1616,7 @@
             role: "user",
             parts: [
               { text: promptText },
-              {
-                inlineData: {
-                  mimeType: mimeType,
-                  data: base64Data
-                }
-              }
+              { inlineData: { mimeType: mimeType, data: base64Data } }
             ]
           }],
           generationConfig: {
@@ -1485,10 +1645,9 @@
           }
         };
 
-        const apiKey = ""; // Canvas環境で自動提供
+        const apiKey = ""; 
         const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
 
-        // Exponential backoff
         let response = null;
         for (let attempt = 0; attempt < 3; attempt++) {
           try {
@@ -1511,7 +1670,6 @@
         const parsed = JSON.parse(jsonText);
         lastReceiptParsedData = parsed;
 
-        // プレビュー表示
         document.getElementById('detectedStoreBadge').textContent = parsed.store || '店舗名不明';
         document.getElementById('resDate').textContent = parsed.date || formatDateYMD(new Date());
         document.getElementById('resAmount').textContent = `¥${Number(parsed.totalAmount || 0).toLocaleString()}`;
@@ -1535,7 +1693,7 @@
 
       } catch (err) {
         console.error('Receipt AI Error:', err);
-        showToast('レシートの読み取りに失敗しました。鮮明な画像で再度お試しください。', 'error');
+        showToast('レシートの解析に失敗しました。', 'error');
       } finally {
         loadingEl.classList.add('hidden');
       }
@@ -1543,25 +1701,21 @@
 
     function applyReceiptToInputModal() {
       if (!lastReceiptParsedData) return;
-
       openRecordModalForNew();
       document.getElementById('formDate').value = lastReceiptParsedData.date || formatDateYMD(new Date());
       document.getElementById('formAmount').value = lastReceiptParsedData.totalAmount || '';
-      
-      const category = lastReceiptParsedData.category || '食費';
-      selectCategory(category);
+      selectCategory(lastReceiptParsedData.category || '食費');
 
       let memo = lastReceiptParsedData.store ? `${lastReceiptParsedData.store} ` : '';
       if (lastReceiptParsedData.items && lastReceiptParsedData.items.length > 0) {
         memo += `(${lastReceiptParsedData.items.map(i => i.name).slice(0, 3).join(', ')}等)`;
       }
       document.getElementById('formMemo').value = memo;
-
       showToast('レシートの内容をフォームに反映しました', 'info');
     }
 
     /* ========================================================
-       8. モーダル操作・フォームイベント
+       7. モーダル操作・フォーム
     ======================================================== */
     function openRecordModalForNew(targetDate = null) {
       document.getElementById('recordModalTitle').innerHTML = '<i class="fa-solid fa-plus text-brand-600"></i> 家計簿の新規入力';
@@ -1574,7 +1728,6 @@
 
       setRecordType('expense');
       selectCategory('食費');
-
       document.getElementById('recordModal').classList.remove('hidden');
     }
 
@@ -1589,7 +1742,6 @@
 
       setRecordType(record.type || 'expense');
       selectCategory(record.category);
-
       document.getElementById('recordModal').classList.remove('hidden');
     }
 
@@ -1648,7 +1800,6 @@
       });
     }
 
-    // 削除確認カスタムダイアログの制御
     let pendingDeleteId = null;
     function confirmDeleteRecord(id) {
       pendingDeleteId = id;
@@ -1656,7 +1807,7 @@
     }
 
     /* ========================================================
-       9. イベントリスナー登録
+       8. イベントリスナー登録
     ======================================================== */
     function setupEventListeners() {
       // タブ切り替え
@@ -1697,16 +1848,14 @@
         renderSelectedDayRecords();
       });
 
-      // 新規入力ボタン群
+      // 新規入力ボタン
       document.getElementById('btnFloatingAdd').addEventListener('click', () => openRecordModalForNew());
       document.getElementById('btnAddRecordForDate').addEventListener('click', () => openRecordModalForNew(state.selectedCalendarDay));
       document.getElementById('btnQuickAddFromList').addEventListener('click', () => openRecordModalForNew());
 
-      // モーダル閉じる
       document.getElementById('btnCloseRecordModal').addEventListener('click', closeRecordModal);
       document.getElementById('btnCancelRecordModal').addEventListener('click', closeRecordModal);
 
-      // 収支区分ボタン
       document.getElementById('btnTypeExpense').addEventListener('click', () => setRecordType('expense'));
       document.getElementById('btnTypeIncome').addEventListener('click', () => setRecordType('income'));
 
@@ -1758,7 +1907,6 @@
             await deleteRecord(pendingDeleteId);
             showToast('明細を削除しました', 'info');
           } catch (err) {
-            console.error('Delete error:', err);
             showToast('削除に失敗しました', 'error');
           } finally {
             pendingDeleteId = null;
@@ -1799,6 +1947,7 @@
         document.getElementById('roomModal').classList.add('hidden');
       });
       document.getElementById('btnCopyRoomLink').addEventListener('click', copyRoomLink);
+      document.getElementById('btnShareQuick').addEventListener('click', copyRoomLink);
       document.getElementById('btnJoinRoom').addEventListener('click', () => {
         const target = document.getElementById('inputTargetRoomId').value;
         if (target && target.trim() !== '') {
@@ -1828,11 +1977,12 @@
           document.getElementById('userNameDisplay').textContent = newName;
           document.getElementById('userAvatar').textContent = newName.substring(0, 1);
           document.getElementById('profileModal').classList.add('hidden');
+          sendPresence();
           showToast(`名前を「${newName}」に設定しました`, 'success');
         }
       });
 
-      // レシート読み取りイベント
+      // レシート
       const fileInput = document.getElementById('receiptFileInput');
       fileInput.addEventListener('change', (e) => {
         if (e.target.files && e.target.files[0]) {
@@ -1843,7 +1993,7 @@
     }
 
     /* ========================================================
-       10. ユーティリティ関数
+       9. ユーティリティ
     ======================================================== */
     function formatDateYMD(d) {
       const year = d.getFullYear();
@@ -1889,38 +2039,16 @@
     }
 
     function copyRoomLink() {
-      const isEmbedded = window.self !== window.top;
-      let textToCopy = '';
-
-      if (isEmbedded) {
-        // Googleサイト等のiframeに埋め込まれている場合、iframe内部のURLは開けないため
-        // 親サイトの参照元URL、または合言葉そのものをコピー
-        const referrer = document.referrer;
-        if (referrer && referrer.includes('sites.google.com')) {
-          const cleanUrl = referrer.split('?')[0];
-          textToCopy = `${cleanUrl}?room=${encodeURIComponent(state.roomId)}`;
-        } else {
-          // 合言葉のみ
-          textToCopy = state.roomId;
-        }
-      } else {
-        textToCopy = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(state.roomId)}`;
-      }
-
-      // クリップボード書き込み
+      const url = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(state.roomId)}`;
       const tempInput = document.createElement('input');
-      tempInput.value = textToCopy;
+      tempInput.value = url;
       document.body.appendChild(tempInput);
       tempInput.select();
       try {
         document.execCommand('copy');
-        if (isEmbedded && textToCopy === state.roomId) {
-          showToast(`ルーム合言葉【${state.roomId}】をコピーしました！`, 'success');
-        } else {
-          showToast('共有用リンクをクリップボードにコピーしました！', 'success');
-        }
+        showToast(`招待リンクをコピーしました！（合言葉: ${state.roomId}）`, 'success');
       } catch (err) {
-        showToast(`ルームID: ${state.roomId}`, 'info');
+        showToast(`ルーム合言葉: ${state.roomId}`, 'info');
       }
       document.body.removeChild(tempInput);
     }
@@ -1990,33 +2118,13 @@
           category: '日用品',
           isShared: true,
           payer: 'パートナー',
-          memo: '洗剤・トイレットペーパー'
-        },
-        {
-          id: 's3',
-          type: 'expense',
-          amount: 1500,
-          date: ymd,
-          category: '趣味娯楽',
-          isShared: false,
-          payer: state.userName,
-          memo: '個人用のカフェ代'
-        },
-        {
-          id: 's4',
-          type: 'income',
-          amount: 280000,
-          date: `${formatYearMonth(today)}-25`,
-          category: '給料',
-          isShared: false,
-          payer: state.userName,
-          memo: '今月の手取り給与'
+          memo: '洗剤・日用品'
         }
       ];
     }
 
     /* ========================================================
-       11. アプリケーション起動
+       10. アプリケーション起動
     ======================================================== */
     window.onload = async function() {
       document.getElementById('currentRoomDisplay').textContent = state.roomId;
@@ -2025,7 +2133,8 @@
       document.getElementById('userAvatar').textContent = state.userName.substring(0, 1);
 
       setupEventListeners();
-      await initFirebase();
+      renderOnlineMembers();
+      await initSync();
       renderAll();
     };
   </script>
