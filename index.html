@@ -627,6 +627,7 @@
       userName: safeStorage.getItem('pb_uname') || ('ユーザー' + Math.floor(10 + Math.random() * 90)),
       userColor: safeStorage.getItem('pb_color') || getRandomColor(),
       records: [],
+      deletedIds: {}, // 削除済みIDの追跡（相手の画面でも確実に消すため）
       onlineUsers: {},
       currentCalendarDate: new Date(),
       selectedCalendarDay: formatDateYMD(new Date()),
@@ -635,8 +636,7 @@
       selectedCategory: '食費',
       graphScope: 'shared',
       analyticsMonth: formatYearMonth(new Date()),
-      charts: { pie: null, bar: null },
-      lastUpdated: 0
+      charts: { pie: null, bar: null }
     };
 
     safeStorage.setItem('pb_uid', state.userId);
@@ -675,8 +675,7 @@
     }
 
     /* ========================================================
-       3. 確実なリアルタイム同期エンジン (MQTT over Secure WebSocket)
-       (複数ブラウザ・端末間で確実に即時同期)
+       3. 確実なリアルタイム同期エンジン (MQTT Retain & IDマージ)
     ======================================================== */
     let mqttClient = null;
 
@@ -688,9 +687,8 @@
       updateSyncBadge('接続中', 'amber');
 
       try {
-        // 無料かつ安定したグローバルWSSブローカー
         const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
-        const clientId = 'pairbook_' + state.userId + '_' + Math.random().toString(16).substring(2, 8);
+        const clientId = 'pb_' + state.userId + '_' + Math.random().toString(16).substring(2, 8);
 
         mqttClient = mqtt.connect(brokerUrl, {
           clientId: clientId,
@@ -699,15 +697,15 @@
           reconnectPeriod: 3000
         });
 
-        const topicData = `pairbook/v5/${state.roomId}/data`;
-        const topicPresence = `pairbook/v5/${state.roomId}/presence`;
-        const topicSyncReq = `pairbook/v5/${state.roomId}/sync_req`;
+        const topicData = `pairbook/v6/${state.roomId}/data`;
+        const topicPresence = `pairbook/v6/${state.roomId}/presence`;
+        const topicSyncReq = `pairbook/v6/${state.roomId}/sync_req`;
 
         mqttClient.on('connect', () => {
           updateSyncBadge('同期中', 'emerald');
           mqttClient.subscribe([topicData, topicPresence, topicSyncReq], { qos: 1 });
 
-          // 接続時に相手端末へ最新データの共有をリクエスト
+          // 接続時に相手またはブローカーへ最新明細をリクエスト
           mqttClient.publish(topicSyncReq, JSON.stringify({ requesterId: state.userId }));
           sendPresence();
         });
@@ -716,29 +714,22 @@
           try {
             const payload = JSON.parse(message.toString());
 
-            // 1. データ更新メッセージ
+            // 1. 明細データの受信（時計ズレ判定を廃止し、確実にマージ）
             if (topic === topicData) {
-              if (Array.isArray(payload.items) && payload.timestamp > (state.lastUpdated || 0)) {
-                state.records = payload.items;
-                state.lastUpdated = payload.timestamp;
-                saveCachedRecords();
-                renderAll();
+              if (payload.deletedIds) {
+                Object.assign(state.deletedIds, payload.deletedIds);
+              }
+              if (Array.isArray(payload.items)) {
+                const isFromOther = payload.senderId && payload.senderId !== state.userId;
+                mergeRecords(payload.items, isFromOther ? payload.senderName : null);
                 updateSyncBadge('同期完了', 'emerald');
-                if (payload.senderName && payload.senderId !== state.userId) {
-                  showToast(`${escapeHtml(payload.senderName)}さんが明細を更新しました`, 'info');
-                }
               }
             }
 
-            // 2. 相手端末からの同期リクエスト（自分が最新を持っていれば返信）
+            // 2. 相手端末からの同期リクエスト（自分の最新データを返信）
             if (topic === topicSyncReq) {
               if (payload.requesterId !== state.userId && state.records.length > 0) {
-                mqttClient.publish(topicData, JSON.stringify({
-                  items: state.records,
-                  timestamp: state.lastUpdated,
-                  senderId: state.userId,
-                  senderName: state.userName
-                }), { qos: 1 });
+                syncToCloud();
               }
             }
 
@@ -773,10 +764,57 @@
       }
     }
 
+    /* レコードの合体（マージ）ロジック */
+    function mergeRecords(incomingItems, senderName = null) {
+      if (!Array.isArray(incomingItems)) return;
+      let hasChanged = false;
+
+      const map = new Map();
+      state.records.forEach(r => map.set(r.id, r));
+
+      incomingItems.forEach(inc => {
+        if (!inc || !inc.id) return;
+
+        // 削除済みリストに入っている場合は除外
+        if (inc.isDeleted || (state.deletedIds[inc.id] && state.deletedIds[inc.id] >= (inc.updatedAt || 0))) {
+          if (map.has(inc.id)) {
+            map.delete(inc.id);
+            hasChanged = true;
+          }
+          return;
+        }
+
+        const current = map.get(inc.id);
+        if (!current) {
+          // 初期サンプルデータ (s1) が残っていれば本番データ到着時に消去
+          if (map.has('s1')) map.delete('s1');
+          map.set(inc.id, inc);
+          hasChanged = true;
+        } else {
+          // すでに存在する場合、より新しい更新日時のデータを採用
+          if ((inc.updatedAt || 0) > (current.updatedAt || 0)) {
+            map.set(inc.id, inc);
+            hasChanged = true;
+          }
+        }
+      });
+
+      if (hasChanged) {
+        state.records = Array.from(map.values());
+        state.records.sort((a, b) => new Date(b.date) - new Date(a.date));
+        saveCachedRecords();
+        renderAll();
+
+        if (senderName) {
+          showToast(`${escapeHtml(senderName)}さんの明細を同期しました！`, 'success');
+        }
+      }
+    }
+
     function sendPresence() {
       if (!mqttClient || !mqttClient.connected) return;
       try {
-        const topicPresence = `pairbook/v5/${state.roomId}/presence`;
+        const topicPresence = `pairbook/v6/${state.roomId}/presence`;
         mqttClient.publish(topicPresence, JSON.stringify({
           userId: state.userId,
           userName: state.userName,
@@ -785,7 +823,6 @@
       } catch (e) {}
     }
 
-    // 定期的なハートビート送信（5秒おき）
     setInterval(() => {
       sendPresence();
       const now = Date.now();
@@ -803,7 +840,6 @@
       const container = document.getElementById('onlineMembersList');
       container.innerHTML = '';
 
-      // 自分を登録
       state.onlineUsers[state.userId] = {
         name: state.userName,
         color: state.userColor,
@@ -833,22 +869,29 @@
     }
 
     /* ========================================================
-       4. データ保存・削除（クラウド自動送信）
+       4. データ保存・削除（クラウドRetain自動送信）
     ======================================================== */
-    function syncToCloud() {
-      state.lastUpdated = Date.now();
+    function syncToCloud(extraDeletedItem = null) {
       saveCachedRecords();
 
       if (mqttClient && mqttClient.connected) {
         try {
-          const topicData = `pairbook/v5/${state.roomId}/data`;
+          const topicData = `pairbook/v6/${state.roomId}/data`;
+          const itemsToSend = [...state.records];
+          if (extraDeletedItem) {
+            itemsToSend.push(extraDeletedItem);
+          }
+
           const payload = JSON.stringify({
-            items: state.records,
-            timestamp: state.lastUpdated,
+            items: itemsToSend,
+            deletedIds: state.deletedIds,
             senderId: state.userId,
-            senderName: state.userName
+            senderName: state.userName,
+            sentAt: Date.now()
           });
-          mqttClient.publish(topicData, payload, { qos: 1 });
+
+          // 【最重要】retain: true でサーバーに明細を保持！後から開いた相手も即時取得可能
+          mqttClient.publish(topicData, payload, { qos: 1, retain: true });
           updateSyncBadge('同期完了', 'emerald');
         } catch (e) {
           console.error('Sync send error', e);
@@ -857,12 +900,17 @@
     }
 
     function saveRecord(recordData) {
+      const now = Date.now();
       if (!recordData.id) {
-        recordData.id = 'r_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+        recordData.id = 'r_' + now + '_' + Math.random().toString(36).substring(2, 6);
         recordData.createdAt = new Date().toISOString();
         recordData.createdById = state.userId;
       }
-      state.records = state.records.filter(r => r.id !== recordData.id);
+      recordData.updatedAt = now;
+      recordData.isDeleted = false;
+
+      // 初期サンプルがあれば除外
+      state.records = state.records.filter(r => r.id !== 's1' && r.id !== recordData.id);
       state.records.unshift(recordData);
       state.records.sort((a, b) => new Date(b.date) - new Date(a.date));
 
@@ -871,9 +919,14 @@
     }
 
     function deleteRecord(recordId) {
+      const now = Date.now();
+      state.deletedIds[recordId] = now;
+      const target = state.records.find(r => r.id === recordId);
       state.records = state.records.filter(r => r.id !== recordId);
       renderAll();
-      syncToCloud();
+
+      const deletedPayload = target ? { ...target, isDeleted: true, updatedAt: now } : { id: recordId, isDeleted: true, updatedAt: now };
+      syncToCloud(deletedPayload);
     }
 
     function loadCachedRecords() {
@@ -1683,6 +1736,10 @@
 
       // 手動同期ボタン
       document.getElementById('btnForceSync').addEventListener('click', () => {
+        if (mqttClient && mqttClient.connected) {
+          const topicSyncReq = `pairbook/v6/${state.roomId}/sync_req`;
+          mqttClient.publish(topicSyncReq, JSON.stringify({ requesterId: state.userId }));
+        }
         loadCachedRecords();
         renderAll();
         sendPresence();
