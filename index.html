@@ -10,8 +10,6 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <!-- MQTT.js (複数ブラウザ・端末間で確実にリアルタイム同期する安定通信エンジン) -->
-  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -361,7 +359,7 @@
   <!-- ===============================
        スマホ下部固定ナビゲーション（ボトムバー）
   =============================== -->
-  <nav class="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200 shadow-lg px-2 py-1 flex items-center justify-around max-w-3xl mx-auto">
+  <nav class="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-slate-200 shadow-lg px-1 py-1 flex items-center justify-around max-w-3xl mx-auto">
     <button data-tab="calendar" class="tab-btn active flex-1 py-1 flex flex-col items-center justify-center text-brand-600 font-bold transition">
       <i class="fa-regular fa-calendar-days text-base mb-0.5"></i>
       <span class="text-[10px]">カレンダー</span>
@@ -376,6 +374,11 @@
       <i class="fa-solid fa-plus"></i>
     </button>
 
+    <!-- レシート読み取りボタン復元 -->
+    <button data-tab="receipt" class="tab-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-600 font-medium transition">
+      <i class="fa-solid fa-camera text-base mb-0.5"></i>
+      <span class="text-[10px]">レシート</span>
+    </button>
     <button data-tab="settlement" class="tab-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-600 font-medium transition">
       <i class="fa-solid fa-scale-balanced text-base mb-0.5"></i>
       <span class="text-[10px]">清算</span>
@@ -392,7 +395,7 @@
   <div id="recordSheetBackdrop" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs hidden transition-opacity flex flex-col justify-end">
     <div id="recordSheet" class="w-full max-w-lg mx-auto bg-white rounded-t-3xl shadow-2xl max-h-[88vh] flex flex-col overflow-hidden transition-transform duration-200 relative">
       
-      <!-- シートヘッダー（常に上部に固定・バツボタンが絶対に画面外へ飛ばない） -->
+      <!-- シートヘッダー（常に上部に固定） -->
       <div class="sticky top-0 bg-white px-5 pt-3 pb-3 border-b border-slate-100 flex items-center justify-between shrink-0 z-20">
         <div class="w-10 h-1 bg-slate-200 rounded-full mx-auto absolute left-1/2 -translate-x-1/2 top-1.5"></div>
         <h3 id="recordModalTitle" class="font-bold text-slate-800 text-sm flex items-center gap-1.5 mt-1">
@@ -406,6 +409,22 @@
       <!-- 入力スクロールエリア -->
       <form id="recordForm" class="p-4 overflow-y-auto space-y-4 flex-1 overscroll-contain">
         <input type="hidden" id="editRecordId" value="">
+
+        <!-- 入力画面内のクイックレシート読み取りボタン -->
+        <div class="bg-amber-50/80 border border-amber-200 rounded-2xl p-2.5 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="w-7 h-7 rounded-lg bg-amber-500 text-white flex items-center justify-center text-xs shrink-0">
+              <i class="fa-solid fa-camera"></i>
+            </div>
+            <div>
+              <span class="text-xs font-bold text-amber-900 block leading-tight">レシートから自動入力</span>
+              <span class="text-[10px] text-amber-700">写真を撮るだけで金額・品目を自動セット</span>
+            </div>
+          </div>
+          <button type="button" id="btnQuickReceiptScan" class="px-3 py-1.5 rounded-xl bg-amber-600 active:bg-amber-700 text-white font-bold text-xs shadow-xs transition">
+            撮影する
+          </button>
+        </div>
 
         <!-- 1. 収支切り替え（大きなタブ） -->
         <div class="grid grid-cols-2 gap-2">
@@ -675,92 +694,116 @@
     }
 
     /* ========================================================
-       3. 確実なリアルタイム同期エンジン (MQTT Retain & IDマージ)
+       3. 確実なHTTPS同期エンジン (Canvas / GitHub Pages / モバイル対応)
+       WebSocket不許可エラーを防止し、標準HTTPSポート443で通信
     ======================================================== */
-    let mqttClient = null;
+    let sseSource = null;
+    let localBroadcastChannel = null;
+
+    function getTopicName() {
+      const clean = state.roomId.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+      return `pb_kakeibo_${clean || 'default'}`;
+    }
 
     function initRealtimeEngine() {
-      if (mqttClient) {
-        try { mqttClient.end(true); } catch(e){}
+      // 既存リスナーの安全な後片付け
+      if (sseSource) {
+        try { sseSource.close(); } catch(e){}
+        sseSource = null;
+      }
+      if (localBroadcastChannel) {
+        try { localBroadcastChannel.close(); } catch(e){}
+        localBroadcastChannel = null;
       }
 
-      updateSyncBadge('接続中', 'amber');
-
+      // 同一端末・同一ブラウザの別タブ同期（即時反映）
       try {
-        const brokerUrl = 'wss://broker.emqx.io:8084/mqtt';
-        const clientId = 'pb_' + state.userId + '_' + Math.random().toString(16).substring(2, 8);
+        localBroadcastChannel = new BroadcastChannel(`pb_chan_${state.roomId}`);
+        localBroadcastChannel.onmessage = (ev) => {
+          handleIncomingPayload(ev.data);
+        };
+      } catch(e) {}
 
-        mqttClient = mqtt.connect(brokerUrl, {
-          clientId: clientId,
-          clean: true,
-          connectTimeout: 5000,
-          reconnectPeriod: 3000
-        });
+      updateSyncBadge('同期中', 'emerald');
 
-        const topicData = `pairbook/v6/${state.roomId}/data`;
-        const topicPresence = `pairbook/v6/${state.roomId}/presence`;
-        const topicSyncReq = `pairbook/v6/${state.roomId}/sync_req`;
+      // クラウドから最新の明細履歴を取得
+      fetchLatestFromCloud();
+      sendPresence();
 
-        mqttClient.on('connect', () => {
+      // 標準HTTPS (ポート443) のServer-Sent Eventsでリアルタイム受信
+      try {
+        const topic = getTopicName();
+        sseSource = new EventSource(`https://ntfy.sh/${topic}/sse`);
+
+        sseSource.onopen = () => {
           updateSyncBadge('同期中', 'emerald');
-          mqttClient.subscribe([topicData, topicPresence, topicSyncReq], { qos: 1 });
+        };
 
-          // 接続時に相手またはブローカーへ最新明細をリクエスト
-          mqttClient.publish(topicSyncReq, JSON.stringify({ requesterId: state.userId }));
-          sendPresence();
-        });
-
-        mqttClient.on('message', (topic, message) => {
+        sseSource.onmessage = (event) => {
           try {
-            const payload = JSON.parse(message.toString());
-
-            // 1. 明細データの受信（時計ズレ判定を廃止し、確実にマージ）
-            if (topic === topicData) {
-              if (payload.deletedIds) {
-                Object.assign(state.deletedIds, payload.deletedIds);
-              }
-              if (Array.isArray(payload.items)) {
-                const isFromOther = payload.senderId && payload.senderId !== state.userId;
-                mergeRecords(payload.items, isFromOther ? payload.senderName : null);
-                updateSyncBadge('同期完了', 'emerald');
-              }
+            const data = JSON.parse(event.data);
+            if (data.event === 'message' && data.message) {
+              const payload = JSON.parse(data.message);
+              handleIncomingPayload(payload);
             }
+          } catch (e) {}
+        };
 
-            // 2. 相手端末からの同期リクエスト（自分の最新データを返信）
-            if (topic === topicSyncReq) {
-              if (payload.requesterId !== state.userId && state.records.length > 0) {
-                syncToCloud();
-              }
-            }
-
-            // 3. 在室プレゼンス
-            if (topic === topicPresence) {
-              if (payload.userId && payload.userId !== state.userId) {
-                state.onlineUsers[payload.userId] = {
-                  name: payload.userName,
-                  color: payload.userColor,
-                  lastSeen: Date.now()
-                };
-                renderOnlineMembers();
-              }
-            }
-          } catch (e) {
-            console.error('MQTT message parse error', e);
-          }
-        });
-
-        mqttClient.on('error', (err) => {
-          console.error('MQTT error', err);
-          updateSyncBadge('再接続中', 'amber');
-        });
-
-        mqttClient.on('offline', () => {
-          updateSyncBadge('オフライン', 'slate');
-        });
-
+        sseSource.onerror = () => {
+          // SSEが制限されている環境（Canvas等）でも定期ポーリングで確実に動作継続
+          updateSyncBadge('同期中', 'emerald');
+        };
       } catch (err) {
-        console.error('Realtime init error', err);
-        updateSyncBadge('ローカル', 'slate');
+        console.warn('SSE fallback to polling', err);
+      }
+    }
+
+    /* クラウドから最新明細をフェッチ */
+    async function fetchLatestFromCloud() {
+      const topic = getTopicName();
+      try {
+        const res = await fetch(`https://ntfy.sh/${topic}/json?poll=1&since=24h`);
+        if (!res.ok) return;
+        const text = await res.text();
+        if (!text.trim()) return;
+
+        const lines = text.trim().split('\n');
+        lines.forEach(line => {
+          try {
+            const item = JSON.parse(line);
+            if (item.event === 'message' && item.message) {
+              const payload = JSON.parse(item.message);
+              handleIncomingPayload(payload);
+            }
+          } catch(e) {}
+        });
+      } catch (err) {
+        // オフライン・保護環境でもクラッシュさせずサイレントにフォールバック
+      }
+    }
+
+    /* 受信データの振り分け */
+    function handleIncomingPayload(payload) {
+      if (!payload || typeof payload !== 'object') return;
+
+      if (payload.type === 'data') {
+        if (payload.deletedIds) {
+          Object.assign(state.deletedIds, payload.deletedIds);
+        }
+        if (Array.isArray(payload.items)) {
+          const isFromOther = payload.senderId && payload.senderId !== state.userId;
+          mergeRecords(payload.items, isFromOther ? payload.senderName : null);
+          updateSyncBadge('同期完了', 'emerald');
+        }
+      } else if (payload.type === 'presence') {
+        if (payload.userId && payload.userId !== state.userId) {
+          state.onlineUsers[payload.userId] = {
+            name: payload.userName,
+            color: payload.userColor,
+            lastSeen: Date.now()
+          };
+          renderOnlineMembers();
+        }
       }
     }
 
@@ -769,72 +812,107 @@
       if (!Array.isArray(incomingItems)) return;
       let hasChanged = false;
 
-      const map = new Map();
-      state.records.forEach(r => map.set(r.id, r));
+      // 自分のローカル個人明細（非共有）を退避して保持
+      const myPrivateRecords = state.records.filter(r => !r.isShared);
+      const sharedMap = new Map();
+      state.records.filter(r => r.isShared).forEach(r => sharedMap.set(r.id, r));
 
       incomingItems.forEach(inc => {
         if (!inc || !inc.id) return;
 
+        // 【プライバシー保護】他人の個人明細（万が一流れてきても絶対に除外）
+        if (!inc.isShared && inc.createdById !== state.userId) {
+          return;
+        }
+
         // 削除済みリストに入っている場合は除外
         if (inc.isDeleted || (state.deletedIds[inc.id] && state.deletedIds[inc.id] >= (inc.updatedAt || 0))) {
-          if (map.has(inc.id)) {
-            map.delete(inc.id);
+          if (sharedMap.has(inc.id)) {
+            sharedMap.delete(inc.id);
             hasChanged = true;
           }
           return;
         }
 
-        const current = map.get(inc.id);
+        const current = sharedMap.get(inc.id);
         if (!current) {
-          // 初期サンプルデータ (s1) が残っていれば本番データ到着時に消去
-          if (map.has('s1')) map.delete('s1');
-          map.set(inc.id, inc);
+          if (sharedMap.has('s1')) sharedMap.delete('s1');
+          sharedMap.set(inc.id, inc);
           hasChanged = true;
         } else {
-          // すでに存在する場合、より新しい更新日時のデータを採用
           if ((inc.updatedAt || 0) > (current.updatedAt || 0)) {
-            map.set(inc.id, inc);
+            sharedMap.set(inc.id, inc);
             hasChanged = true;
           }
         }
       });
 
       if (hasChanged) {
-        state.records = Array.from(map.values());
+        // 相手から届いた共有明細と、自分専用の個人明細を合体
+        state.records = [...Array.from(sharedMap.values()), ...myPrivateRecords];
         state.records.sort((a, b) => new Date(b.date) - new Date(a.date));
         saveCachedRecords();
         renderAll();
 
         if (senderName) {
-          showToast(`${escapeHtml(senderName)}さんの明細を同期しました！`, 'success');
+          showToast(`${escapeHtml(senderName)}さんの共有明細を同期しました！`, 'success');
         }
       }
     }
 
-    function sendPresence() {
-      if (!mqttClient || !mqttClient.connected) return;
+    async function sendPresence() {
+      const payload = {
+        type: 'presence',
+        userId: state.userId,
+        userName: state.userName,
+        userColor: state.userColor,
+        time: Date.now()
+      };
+
+      if (localBroadcastChannel) {
+        try { localBroadcastChannel.postMessage(payload); } catch(e){}
+      }
+
       try {
-        const topicPresence = `pairbook/v6/${state.roomId}/presence`;
-        mqttClient.publish(topicPresence, JSON.stringify({
-          userId: state.userId,
-          userName: state.userName,
-          userColor: state.userColor
-        }));
+        const topic = getTopicName();
+        await fetch(`https://ntfy.sh/${topic}`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+          headers: { 'Content-Type': 'text/plain' }
+        });
       } catch (e) {}
     }
 
+    // 10秒ごとの自動ポーリング（SSEが遮断される環境でも確実に同期を維持）
+    setInterval(() => {
+      fetchLatestFromCloud();
+    }, 10000);
+
+    // 在室ハートビート（30秒ごと）
     setInterval(() => {
       sendPresence();
       const now = Date.now();
       let changed = false;
       Object.keys(state.onlineUsers).forEach(uid => {
-        if (now - state.onlineUsers[uid].lastSeen > 20000 && uid !== state.userId) {
+        if (now - state.onlineUsers[uid].lastSeen > 60000 && uid !== state.userId) {
           delete state.onlineUsers[uid];
           changed = true;
         }
       });
       if (changed) renderOnlineMembers();
-    }, 5000);
+    }, 30000);
+
+    // スマホのカメラや別アプリから復帰した際に即座に最新データを取得
+    window.addEventListener('focus', () => {
+      fetchLatestFromCloud();
+      renderAll();
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        fetchLatestFromCloud();
+        renderAll();
+      }
+    });
 
     function renderOnlineMembers() {
       const container = document.getElementById('onlineMembersList');
@@ -869,33 +947,41 @@
     }
 
     /* ========================================================
-       4. データ保存・削除（クラウドRetain自動送信）
+       4. データ保存・削除（HTTPS クラウド同期）
     ======================================================== */
-    function syncToCloud(extraDeletedItem = null) {
+    async function syncToCloud(extraDeletedItem = null) {
       saveCachedRecords();
 
-      if (mqttClient && mqttClient.connected) {
-        try {
-          const topicData = `pairbook/v6/${state.roomId}/data`;
-          const itemsToSend = [...state.records];
-          if (extraDeletedItem) {
-            itemsToSend.push(extraDeletedItem);
-          }
+      // 【重要】個人明細（isShared: false）はクラウドへ送信しない！共有明細のみ送信
+      const itemsToSend = state.records.filter(r => r.isShared);
+      if (extraDeletedItem && extraDeletedItem.isShared) {
+        itemsToSend.push(extraDeletedItem);
+      }
 
-          const payload = JSON.stringify({
-            items: itemsToSend,
-            deletedIds: state.deletedIds,
-            senderId: state.userId,
-            senderName: state.userName,
-            sentAt: Date.now()
-          });
+      const payload = {
+        type: 'data',
+        items: itemsToSend,
+        deletedIds: state.deletedIds,
+        senderId: state.userId,
+        senderName: state.userName,
+        sentAt: Date.now()
+      };
 
-          // 【最重要】retain: true でサーバーに明細を保持！後から開いた相手も即時取得可能
-          mqttClient.publish(topicData, payload, { qos: 1, retain: true });
-          updateSyncBadge('同期完了', 'emerald');
-        } catch (e) {
-          console.error('Sync send error', e);
-        }
+      if (localBroadcastChannel) {
+        try { localBroadcastChannel.postMessage(payload); } catch(e){}
+      }
+
+      try {
+        const topic = getTopicName();
+        await fetch(`https://ntfy.sh/${topic}`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+          headers: { 'Content-Type': 'text/plain' }
+        });
+        updateSyncBadge('同期完了', 'emerald');
+      } catch (e) {
+        console.warn('Sync post warning (fallback to local)', e);
+        updateSyncBadge('ローカル保存', 'slate');
       }
     }
 
@@ -915,7 +1001,13 @@
       state.records.sort((a, b) => new Date(b.date) - new Date(a.date));
 
       renderAll();
-      syncToCloud();
+
+      // 共有明細ならクラウドに同期、個人明細ならローカルにのみ保存（相手には一切送信しない）
+      if (recordData.isShared) {
+        syncToCloud();
+      } else {
+        saveCachedRecords();
+      }
     }
 
     function deleteRecord(recordId) {
@@ -925,8 +1017,13 @@
       state.records = state.records.filter(r => r.id !== recordId);
       renderAll();
 
-      const deletedPayload = target ? { ...target, isDeleted: true, updatedAt: now } : { id: recordId, isDeleted: true, updatedAt: now };
-      syncToCloud(deletedPayload);
+      const wasShared = target ? target.isShared : true;
+      if (wasShared) {
+        const deletedPayload = target ? { ...target, isDeleted: true, updatedAt: now } : { id: recordId, isDeleted: true, updatedAt: now, isShared: true };
+        syncToCloud(deletedPayload);
+      } else {
+        saveCachedRecords();
+      }
     }
 
     function loadCachedRecords() {
@@ -1736,13 +1833,10 @@
 
       // 手動同期ボタン
       document.getElementById('btnForceSync').addEventListener('click', () => {
-        if (mqttClient && mqttClient.connected) {
-          const topicSyncReq = `pairbook/v6/${state.roomId}/sync_req`;
-          mqttClient.publish(topicSyncReq, JSON.stringify({ requesterId: state.userId }));
-        }
+        fetchLatestFromCloud();
+        sendPresence();
         loadCachedRecords();
         renderAll();
-        sendPresence();
         showToast('最新データを再取得しました', 'info');
       });
 
@@ -1765,6 +1859,11 @@
           sendPresence();
           showToast(`名前を「${name}」に設定しました`, 'success');
         }
+      });
+
+      // 入力シート内からのクイックレシート撮影
+      document.getElementById('btnQuickReceiptScan').addEventListener('click', () => {
+        document.getElementById('receiptFileInput').click();
       });
 
       // レシート写真読み取り
