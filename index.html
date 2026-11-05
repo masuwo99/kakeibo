@@ -433,18 +433,35 @@
           <input type="hidden" id="formCategory" value="食費" required>
         </div>
 
-        <!-- 5. 共有・割り勘トグル -->
-        <div class="p-3 rounded-2xl bg-indigo-50/70 border border-indigo-100 flex items-center justify-between">
-          <div>
-            <label for="formIsShared" class="text-xs font-bold text-indigo-950 flex items-center gap-1 cursor-pointer">
-              <i class="fa-solid fa-users text-brand-600"></i> ルームで共有する（清算対象）
+        <!-- 5. 共有・割り勘トグル ＆ 精算方法（折半 / 全額立て替え） -->
+        <div class="p-3 rounded-2xl bg-indigo-50/70 border border-indigo-100 space-y-2.5">
+          <div class="flex items-center justify-between">
+            <div>
+              <label for="formIsShared" class="text-xs font-bold text-indigo-950 flex items-center gap-1 cursor-pointer">
+                <i class="fa-solid fa-users text-brand-600"></i> ルームで共有する（清算対象）
+              </label>
+              <p class="text-[10px] text-indigo-700 mt-0.5">OFFにすると自分専用の家計簿になり折半から除外</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer shrink-0">
+              <input type="checkbox" id="formIsShared" checked class="sr-only peer">
+              <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-600"></div>
             </label>
-            <p class="text-[10px] text-indigo-700 mt-0.5">OFFにすると自分専用の家計簿になり折半から除外</p>
           </div>
-          <label class="relative inline-flex items-center cursor-pointer shrink-0">
-            <input type="checkbox" id="formIsShared" checked class="sr-only peer">
-            <div class="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-600"></div>
-          </label>
+
+          <!-- 精算方法の選択（折半 / 全額立て替え） -->
+          <div id="splitTypeContainer" class="pt-2 border-t border-indigo-100/80">
+            <label class="block text-[11px] font-bold text-indigo-950 mb-1.5">清算の負担割合</label>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <button type="button" id="btnSplitHalf" class="py-2 px-2.5 rounded-xl border-2 border-brand-500 bg-white text-brand-700 font-bold flex items-center justify-center gap-1.5 shadow-xs transition">
+                <i class="fa-solid fa-arrows-split-up-and-left"></i> 折半 (50:50)
+              </button>
+              <button type="button" id="btnSplitFull" class="py-2 px-2.5 rounded-xl border border-slate-200 bg-white/70 text-slate-600 font-medium flex items-center justify-center gap-1.5 transition">
+                <i class="fa-solid fa-hand-holding-dollar"></i> 全額立て替え (100%)
+              </button>
+            </div>
+            <p id="splitTypeDesc" class="text-[10px] text-indigo-600 mt-1.5">※2人で半分ずつ負担します</p>
+            <input type="hidden" id="formSplitType" value="half">
+          </div>
         </div>
 
         <!-- 6. 支払者 & メモ -->
@@ -1170,6 +1187,15 @@
       const card = document.createElement('div');
       card.className = 'flex items-center justify-between p-3 rounded-2xl bg-white border border-slate-200/80 shadow-xs text-xs';
 
+      let shareBadge = '<span class="px-1.5 py-0.2 rounded bg-slate-100 text-slate-500 text-[9px]">個人</span>';
+      if (rec.isShared) {
+        if (rec.splitType === 'full') {
+          shareBadge = '<span class="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 text-[9px] font-bold">全額立替</span>';
+        } else {
+          shareBadge = '<span class="px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-700 text-[9px] font-bold">折半</span>';
+        }
+      }
+
       card.innerHTML = `
         <div class="flex items-center gap-2.5">
           <div class="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isExp ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}">
@@ -1178,10 +1204,7 @@
           <div>
             <div class="flex items-center gap-1.5 font-bold text-slate-800">
               <span>${escapeHtml(rec.category)}</span>
-              ${rec.isShared ? 
-                '<span class="px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-700 text-[9px] font-bold">共有</span>' : 
-                '<span class="px-1.5 py-0.2 rounded bg-slate-100 text-slate-500 text-[9px]">個人</span>'
-              }
+              ${shareBadge}
             </div>
             <p class="text-[11px] text-slate-400 truncate max-w-[150px] sm:max-w-xs mt-0.5">
               ${showDate ? escapeHtml(rec.date) + ' ・ ' : ''}${escapeHtml(rec.payer || '未指定')}${rec.memo ? ' (' + escapeHtml(rec.memo) + ')' : ''}
@@ -1214,77 +1237,133 @@
         r.isShared && r.type === 'expense' && r.date.startsWith(currentMonthStr)
       );
 
-      const payerTotals = {};
+      const payerPaid = {}; // 各メンバーが実際にレジで払った金額
+      const memberOwed = {}; // 各メンバーが立替てもらっている（相手に返すべき）金額
       let totalShared = 0;
 
-      sharedExpenses.forEach(r => {
-        const p = (r.payer || '未指定').trim();
-        const amt = Number(r.amount);
-        payerTotals[p] = (payerTotals[p] || 0) + amt;
-        totalShared += amt;
+      // ルームに参加しているユーザー名も候補に加える
+      const allKnownMembers = new Set();
+      if (state.userName) allKnownMembers.add(state.userName);
+      Object.values(state.onlineUsers).forEach(u => {
+        if (u.name) allKnownMembers.add(u.name);
       });
 
-      const members = Object.keys(payerTotals);
+      sharedExpenses.forEach(r => {
+        const payer = (r.payer || state.userName || '未指定').trim();
+        const amt = Number(r.amount);
+        totalShared += amt;
+        allKnownMembers.add(payer);
+
+        payerPaid[payer] = (payerPaid[payer] || 0) + amt;
+      });
+
+      const memberList = Array.from(allKnownMembers);
       const instructionEl = document.getElementById('settlementInstruction');
       const cardsGrid = document.getElementById('memberCardsGrid');
       cardsGrid.innerHTML = '';
 
-      if (members.length === 0) {
+      if (sharedExpenses.length === 0) {
         instructionEl.innerHTML = '<span class="text-slate-500 font-normal">今月の共有支出はまだありません</span>';
         renderSharedCategoryBreakdown(sharedExpenses);
         return;
       }
 
-      if (members.length === 1) {
-        instructionEl.innerHTML = `<span>${escapeHtml(members[0])} さんが全額 (¥${totalShared.toLocaleString()}) を支払っています。</span>`;
-      } else if (members.length === 2) {
-        const [p1, p2] = members;
-        const [a1, a2] = [payerTotals[p1], payerTotals[p2]];
+      // 2人の清算計算（折半と全額立て替えを正確に反映）
+      if (memberList.length === 2) {
+        const [p1, p2] = memberList;
+        let p1OwesP2 = 0; // p1がp2に返すべき額
+        let p2OwesP1 = 0; // p2がp1に返すべき額
 
-        if (a1 > a2) {
-          const diff = Math.round((a1 - a2) / 2);
+        sharedExpenses.forEach(r => {
+          const payer = (r.payer || state.userName || '未指定').trim();
+          const amt = Number(r.amount);
+          const isFull = r.splitType === 'full';
+
+          if (payer === p1) {
+            // p1が払った
+            if (isFull) {
+              p2OwesP1 += amt; // 全額立て替え: p2が100%全額返す
+            } else {
+              p2OwesP1 += Math.round(amt / 2); // 折半: p2が半分返す
+            }
+          } else if (payer === p2) {
+            // p2が払った
+            if (isFull) {
+              p1OwesP2 += amt; // 全額立て替え: p1が100%全額返す
+            } else {
+              p1OwesP2 += Math.round(amt / 2); // 折半: p1が半分返す
+            }
+          }
+        });
+
+        const netDifference = p2OwesP1 - p1OwesP2;
+
+        if (netDifference > 0) {
           instructionEl.innerHTML = `
             <span class="text-rose-600 font-extrabold">${escapeHtml(p2)}</span> から 
             <span class="text-brand-600 font-extrabold">${escapeHtml(p1)}</span> へ 
-            <span class="text-emerald-600 text-base font-extrabold underline">¥${diff.toLocaleString()}</span> 送金で折半完了！
+            <span class="text-emerald-600 text-base font-extrabold underline">¥${netDifference.toLocaleString()}</span> 送金で折半完了！
           `;
-        } else if (a2 > a1) {
-          const diff = Math.round((a2 - a1) / 2);
+        } else if (netDifference < 0) {
+          const sendAmt = Math.abs(netDifference);
           instructionEl.innerHTML = `
             <span class="text-rose-600 font-extrabold">${escapeHtml(p1)}</span> から 
             <span class="text-brand-600 font-extrabold">${escapeHtml(p2)}</span> へ 
-            <span class="text-emerald-600 text-base font-extrabold underline">¥${diff.toLocaleString()}</span> 送金で折半完了！
+            <span class="text-emerald-600 text-base font-extrabold underline">¥${sendAmt.toLocaleString()}</span> 送金で折半完了！
           `;
         } else {
-          instructionEl.innerHTML = '<span class="text-emerald-700 font-bold">2人の支払額は同額です！送金の必要はありません 🎉</span>';
+          instructionEl.innerHTML = '<span class="text-emerald-700 font-bold">2人の精算はぴったり一致しています！送金の必要はありません 🎉</span>';
         }
-      } else {
-        const avg = Math.round(totalShared / members.length);
-        instructionEl.innerHTML = `1人あたり目標: <span class="text-brand-600 font-extrabold">¥${avg.toLocaleString()}</span> (合計 ¥${totalShared.toLocaleString()})`;
-      }
 
-      const avg = Math.round(totalShared / (members.length || 1));
-      members.forEach(m => {
-        const paid = payerTotals[m];
-        const diff = paid - avg;
-        const card = document.createElement('div');
-        card.className = 'bg-white rounded-2xl p-3.5 shadow-xs border border-slate-200 flex items-center justify-between text-xs';
-        card.innerHTML = `
-          <div>
-            <h4 class="font-bold text-slate-800 text-sm">${escapeHtml(m)}</h4>
-            <p class="text-[11px] text-slate-400 mt-0.5">支払合計: <span class="font-bold text-slate-700">¥${paid.toLocaleString()}</span></p>
-          </div>
-          <div class="text-right">
-            <span class="font-black text-sm ${diff >= 0 ? 'text-emerald-600' : 'text-rose-600'}">
-              ${diff >= 0 ? '+' : ''}¥${diff.toLocaleString()}
-            </span>
-            <span class="text-[10px] block ${diff >= 0 ? 'text-emerald-500 font-bold' : 'text-rose-500 font-bold'}">
-              ${diff >= 0 ? '受取' : '支払'}
-            </span>
-          </div>
-        `;
-        cardsGrid.appendChild(card);
-      });
+        // 各自のカード表示
+        [p1, p2].forEach(m => {
+          const paid = payerPaid[m] || 0;
+          const isP1 = m === p1;
+          const net = isP1 ? netDifference : -netDifference;
+
+          const card = document.createElement('div');
+          card.className = 'bg-white rounded-2xl p-3.5 shadow-xs border border-slate-200 flex items-center justify-between text-xs';
+          card.innerHTML = `
+            <div>
+              <h4 class="font-bold text-slate-800 text-sm">${escapeHtml(m)}</h4>
+              <p class="text-[11px] text-slate-400 mt-0.5">支払合計: <span class="font-bold text-slate-700">¥${paid.toLocaleString()}</span></p>
+            </div>
+            <div class="text-right">
+              <span class="font-black text-sm ${net >= 0 ? 'text-emerald-600' : 'text-rose-600'}">
+                ${net >= 0 ? '+' : ''}¥${net.toLocaleString()}
+              </span>
+              <span class="text-[10px] block ${net >= 0 ? 'text-emerald-500 font-bold' : 'text-rose-500 font-bold'}">
+                ${net >= 0 ? '受取' : '支払'}
+              </span>
+            </div>
+          `;
+          cardsGrid.appendChild(card);
+        });
+
+      } else {
+        // 1人のみ、または3人以上の場合のフォールバック表示
+        const avg = Math.round(totalShared / (memberList.length || 1));
+        instructionEl.innerHTML = `共有合計: <span class="text-brand-600 font-extrabold">¥${totalShared.toLocaleString()}</span>`;
+
+        memberList.forEach(m => {
+          const paid = payerPaid[m] || 0;
+          const diff = paid - avg;
+          const card = document.createElement('div');
+          card.className = 'bg-white rounded-2xl p-3.5 shadow-xs border border-slate-200 flex items-center justify-between text-xs';
+          card.innerHTML = `
+            <div>
+              <h4 class="font-bold text-slate-800 text-sm">${escapeHtml(m)}</h4>
+              <p class="text-[11px] text-slate-400 mt-0.5">支払合計: <span class="font-bold text-slate-700">¥${paid.toLocaleString()}</span></p>
+            </div>
+            <div class="text-right">
+              <span class="font-black text-sm ${diff >= 0 ? 'text-emerald-600' : 'text-rose-600'}">
+                ${diff >= 0 ? '+' : ''}¥${diff.toLocaleString()}
+              </span>
+            </div>
+          `;
+          cardsGrid.appendChild(card);
+        });
+      }
 
       renderSharedCategoryBreakdown(sharedExpenses);
     }
@@ -1394,6 +1473,23 @@
     /* ========================================================
        6. スマホ最適化ボトムシート操作
     ======================================================== */
+    function setSplitType(type) {
+      document.getElementById('formSplitType').value = type;
+      const btnHalf = document.getElementById('btnSplitHalf');
+      const btnFull = document.getElementById('btnSplitFull');
+      const desc = document.getElementById('splitTypeDesc');
+
+      if (type === 'full') {
+        btnFull.className = 'py-2 px-2.5 rounded-xl border-2 border-amber-500 bg-white text-amber-700 font-bold flex items-center justify-center gap-1.5 shadow-xs transition';
+        btnHalf.className = 'py-2 px-2.5 rounded-xl border border-slate-200 bg-white/70 text-slate-600 font-medium flex items-center justify-center gap-1.5 transition';
+        desc.textContent = '※支払者が全額立て替え、相手が100%返金します';
+      } else {
+        btnHalf.className = 'py-2 px-2.5 rounded-xl border-2 border-brand-500 bg-white text-brand-700 font-bold flex items-center justify-center gap-1.5 shadow-xs transition';
+        btnFull.className = 'py-2 px-2.5 rounded-xl border border-slate-200 bg-white/70 text-slate-600 font-medium flex items-center justify-center gap-1.5 transition';
+        desc.textContent = '※2人で半分ずつ負担します';
+      }
+    }
+
     function openRecordSheetForNew(targetDate = null) {
       document.getElementById('recordModalTitle').innerHTML = '<i class="fa-solid fa-plus text-brand-600"></i> 家計簿をつける';
       document.getElementById('editRecordId').value = '';
@@ -1404,12 +1500,13 @@
       document.getElementById('formPayer').value = state.userName;
       document.getElementById('formMemo').value = '';
       document.getElementById('formIsShared').checked = true;
+      document.getElementById('splitTypeContainer').classList.remove('hidden');
+      setSplitType('half');
 
       setRecordType('expense');
       selectCategory('食費');
 
       showBottomSheet();
-      // ※自動フォーカスをあえて行わないことで、スマホキーボードによる画面押し上げスクロールを防ぐ
     }
 
     function openRecordSheetForEdit(rec) {
@@ -1419,8 +1516,16 @@
       document.getElementById('formAmount').value = rec.amount;
       document.getElementById('formPayer').value = rec.payer || '';
       document.getElementById('formMemo').value = rec.memo || '';
-      document.getElementById('formIsShared').checked = !!rec.isShared;
+      
+      const isShared = !!rec.isShared;
+      document.getElementById('formIsShared').checked = isShared;
+      if (isShared) {
+        document.getElementById('splitTypeContainer').classList.remove('hidden');
+      } else {
+        document.getElementById('splitTypeContainer').classList.add('hidden');
+      }
 
+      setSplitType(rec.splitType || 'half');
       setRecordType(rec.type || 'expense');
       selectCategory(rec.category);
 
@@ -1715,6 +1820,20 @@
         setDateInputValue(e.target.value);
       });
 
+      // 清算方法（折半 / 全額立て替え）切り替え
+      document.getElementById('btnSplitHalf').addEventListener('click', () => setSplitType('half'));
+      document.getElementById('btnSplitFull').addEventListener('click', () => setSplitType('full'));
+
+      // 共有トグルの切り替え連動
+      document.getElementById('formIsShared').addEventListener('change', (e) => {
+        const splitContainer = document.getElementById('splitTypeContainer');
+        if (e.target.checked) {
+          splitContainer.classList.remove('hidden');
+        } else {
+          splitContainer.classList.add('hidden');
+        }
+      });
+
       // 保存
       document.getElementById('recordForm').addEventListener('submit', (e) => {
         e.preventDefault();
@@ -1723,6 +1842,7 @@
         const date = document.getElementById('formDate').value;
         const category = document.getElementById('formCategory').value;
         const isShared = document.getElementById('formIsShared').checked;
+        const splitType = isShared ? document.getElementById('formSplitType').value : 'half';
         const payer = document.getElementById('formPayer').value.trim() || state.userName;
         const memo = document.getElementById('formMemo').value.trim();
 
@@ -1731,7 +1851,7 @@
           return;
         }
 
-        saveRecord({ id, type: state.currentRecordType, amount, date, category, isShared, payer, memo });
+        saveRecord({ id, type: state.currentRecordType, amount, date, category, isShared, splitType, payer, memo });
         closeRecordSheet();
         showToast(id ? '明細を更新しました' : '記録しました！', 'success');
       });
